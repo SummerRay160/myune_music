@@ -47,7 +47,7 @@ jobs:
         run: |
           $langDir = "${env:ProgramFiles(x86)}\Inno Setup 6\Languages"
           if (-not (Test-Path "$langDir\ChineseSimplified.isl")) {
-            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/ChineseSimplified.isl" -OutFile "$langDir\ChineseSimplified.isl"
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/ChineseSimplified.isl" -OutFile "$langDir\ChineseSimplified.isl"
             Write-Output "Downloaded ChineseSimplified.isl"
           } else {
             Write-Output "ChineseSimplified.isl already exists"
