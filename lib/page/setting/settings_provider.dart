@@ -1,7 +1,17 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hotkey_manager/hotkey_manager.dart';
 
 class SettingsProvider with ChangeNotifier {
+  static const _enableGlobalHotkeysKey = 'enableGlobalHotkeys';
+  static const _playPauseHotKeyKey = 'playPauseHotKey';
+  static const _nextTrackHotKeyKey = 'nextTrackHotKey';
+  static const _prevTrackHotKeyKey = 'prevTrackHotKey';
+  static const _volumeUpHotKeyKey = 'volumeUpHotKey';
+  static const _volumeDownHotKeyKey = 'volumeDownHotKey';
+
   static const _prefsKey = 'maxLinesPerLyric';
   static const _fontSizeKey = 'fontSize';
   static const _lyricAlignmentKey = 'lyricAlignment';
@@ -33,10 +43,13 @@ class SettingsProvider with ChangeNotifier {
   static const _audioDeviceIsAutoKey = 'audio_device_is_auto';
   static const _ignorePlaybackErrorsKey = 'ignorePlaybackErrors';
   static const _preferExternalLyricsKey = 'preferExternalLyrics';
+  static const _autoAdjustLyricLayoutKey =
+      'autoAdjustLyricLayout'; // 自动调节歌词字体与间距设置的 key
 
   static const _enableLyricElasticScrollKey = 'enableLyricElasticScroll';
   static const _enableLoudnessKey = 'enableLoudness';
   static const _enableReplayGainKey = 'enableReplayGain';
+  static const _enableGaplessPlaybackKey = 'enableGaplessPlayback';
 
   int _maxLinesPerLyric = 2;
   double _fontSize = 22.0; // 默认字体大小
@@ -57,17 +70,26 @@ class SettingsProvider with ChangeNotifier {
   String? _audioDeviceDesc; // 音频设备描述
   bool _ignorePlaybackErrors = false; // 默认不忽略播放错误
   bool _preferExternalLyrics = false; // 默认不优先读取外置LRC歌词
+  bool _autoAdjustLyricLayout = false; // 默认不自动调节歌词布局
   bool _enableLyricElasticScroll = false;
   bool _enableLoudness = false;
   bool _enableReplayGain = false;
+  bool _enableGaplessPlayback = false; // 默认不启用无缝播放
+
+  bool _enableGlobalHotkeys = true;
+  HotKey? _playPauseHotKey;
+  HotKey? _nextTrackHotKey;
+  HotKey? _prevTrackHotKey;
+  HotKey? _volumeUpHotKey;
+  HotKey? _volumeDownHotKey;
 
   bool _showTaskbarProgress = false;
   bool _enableOnlineLyrics = false; // 默认不启用从网络获取歌词
   String _primaryLyricSource = 'qq'; // 默认主要歌词源为qq音乐
   String _secondaryLyricSource = 'netease'; // 默认备用歌词源为网易云音乐
 
-  // 隐藏页面列表，默认为空（都不隐藏）
-  List<String> _hiddenPages = [];
+  // 默认隐藏音频分析
+  List<String> _hiddenPages = ['音频分析'];
 
   // 默认艺术家分隔符
   List<String> _artistSeparators = [';', '、', '；', '，', ','];
@@ -102,12 +124,23 @@ class SettingsProvider with ChangeNotifier {
   bool get ignorePlaybackErrors => _ignorePlaybackErrors;
 
   bool get preferExternalLyrics => _preferExternalLyrics; // 获取优先读取外置LRC歌词设置
+  bool get autoAdjustLyricLayout => _autoAdjustLyricLayout; // 获取是否自动调节歌词布局
   bool get enableLyricElasticScroll => _enableLyricElasticScroll;
   bool get enableLoudness => _enableLoudness;
   bool get enableReplayGain => _enableReplayGain;
+  bool get enableGaplessPlayback => _enableGaplessPlayback;
+
+  bool get enableGlobalHotkeys => _enableGlobalHotkeys;
+  HotKey? get playPauseHotKey => _playPauseHotKey;
+  HotKey? get nextTrackHotKey => _nextTrackHotKey;
+  HotKey? get prevTrackHotKey => _prevTrackHotKey;
+  HotKey? get volumeUpHotKey => _volumeUpHotKey;
+  HotKey? get volumeDownHotKey => _volumeDownHotKey;
+
+  late final Future<void> initializationFuture;
 
   SettingsProvider() {
-    _loadFromPrefs();
+    initializationFuture = _loadFromPrefs();
   }
 
   Future<void> _loadFromPrefs() async {
@@ -142,10 +175,12 @@ class SettingsProvider with ChangeNotifier {
     _audioDeviceDesc = prefs.getString(_audioDeviceDescKey);
     _ignorePlaybackErrors = prefs.getBool(_ignorePlaybackErrorsKey) ?? false;
     _preferExternalLyrics = prefs.getBool(_preferExternalLyricsKey) ?? false;
+    _autoAdjustLyricLayout = prefs.getBool(_autoAdjustLyricLayoutKey) ?? false;
     _enableLyricElasticScroll =
         prefs.getBool(_enableLyricElasticScrollKey) ?? false;
     _enableLoudness = prefs.getBool(_enableLoudnessKey) ?? false;
     _enableReplayGain = prefs.getBool(_enableReplayGainKey) ?? false;
+    _enableGaplessPlayback = prefs.getBool(_enableGaplessPlaybackKey) ?? false;
     if (_enableLoudness && _enableReplayGain) {
       _enableReplayGain = false;
       await prefs.setBool(_enableReplayGainKey, false);
@@ -170,6 +205,29 @@ class SettingsProvider with ChangeNotifier {
             orElse: () => TextAlign.center,
           )
         : TextAlign.center;
+
+    _enableGlobalHotkeys = prefs.getBool(_enableGlobalHotkeysKey) ?? true;
+    _playPauseHotKey = _parseHotKey(
+      prefs.getString(_playPauseHotKeyKey),
+      'play_pause',
+    );
+    _nextTrackHotKey = _parseHotKey(
+      prefs.getString(_nextTrackHotKeyKey),
+      'next_track',
+    );
+    _prevTrackHotKey = _parseHotKey(
+      prefs.getString(_prevTrackHotKeyKey),
+      'prev_track',
+    );
+    _volumeUpHotKey = _parseHotKey(
+      prefs.getString(_volumeUpHotKeyKey),
+      'volume_up',
+    );
+    _volumeDownHotKey = _parseHotKey(
+      prefs.getString(_volumeDownHotKeyKey),
+      'volume_down',
+    );
+
     notifyListeners(); // 读取完毕后刷新界面
   }
 
@@ -257,6 +315,13 @@ class SettingsProvider with ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_addLyricPaddingKey, value);
+  }
+
+  void setAutoAdjustLyricLayout(bool value) async {
+    _autoAdjustLyricLayout = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoAdjustLyricLayoutKey, value);
   }
 
   void setArtistSeparators(List<String> separators) async {
@@ -391,5 +456,138 @@ class SettingsProvider with ChangeNotifier {
     if (value) {
       await prefs.setBool(_enableLoudnessKey, false);
     }
+  }
+
+  void setEnableGaplessPlayback(bool value) async {
+    _enableGaplessPlayback = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_enableGaplessPlaybackKey, value);
+  }
+
+  HotKey? _parseHotKey(String? jsonStr, String type) {
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final Map<String, dynamic> json = jsonDecode(jsonStr);
+        return HotKey.fromJson(json);
+      } catch (e) {
+        // Fallback to default
+      }
+    }
+    return _getDefaultHotKey(type);
+  }
+
+  HotKey _getDefaultHotKey(String type) {
+    switch (type) {
+      case 'play_pause':
+        return HotKey(
+          key: PhysicalKeyboardKey.space,
+          modifiers: [HotKeyModifier.control, HotKeyModifier.alt],
+          scope: HotKeyScope.system,
+          identifier: 'play_pause',
+        );
+      case 'next_track':
+        return HotKey(
+          key: PhysicalKeyboardKey.arrowRight,
+          modifiers: [HotKeyModifier.control, HotKeyModifier.alt],
+          scope: HotKeyScope.system,
+          identifier: 'next_track',
+        );
+      case 'prev_track':
+        return HotKey(
+          key: PhysicalKeyboardKey.arrowLeft,
+          modifiers: [HotKeyModifier.control, HotKeyModifier.alt],
+          scope: HotKeyScope.system,
+          identifier: 'prev_track',
+        );
+      case 'volume_up':
+        return HotKey(
+          key: PhysicalKeyboardKey.arrowUp,
+          modifiers: [HotKeyModifier.control, HotKeyModifier.alt],
+          scope: HotKeyScope.system,
+          identifier: 'volume_up',
+        );
+      case 'volume_down':
+        return HotKey(
+          key: PhysicalKeyboardKey.arrowDown,
+          modifiers: [HotKeyModifier.control, HotKeyModifier.alt],
+          scope: HotKeyScope.system,
+          identifier: 'volume_down',
+        );
+      default:
+        throw ArgumentError('Invalid hotkey type');
+    }
+  }
+
+  Future<void> setEnableGlobalHotkeys(bool value) async {
+    _enableGlobalHotkeys = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_enableGlobalHotkeysKey, value);
+  }
+
+  Future<void> setHotKey(String type, HotKey? hotKey) async {
+    final prefs = await SharedPreferences.getInstance();
+    final String key;
+    switch (type) {
+      case 'play_pause':
+        _playPauseHotKey = hotKey;
+        key = _playPauseHotKeyKey;
+        break;
+      case 'next_track':
+        _nextTrackHotKey = hotKey;
+        key = _nextTrackHotKeyKey;
+        break;
+      case 'prev_track':
+        _prevTrackHotKey = hotKey;
+        key = _prevTrackHotKeyKey;
+        break;
+      case 'volume_up':
+        _volumeUpHotKey = hotKey;
+        key = _volumeUpHotKeyKey;
+        break;
+      case 'volume_down':
+        _volumeDownHotKey = hotKey;
+        key = _volumeDownHotKeyKey;
+        break;
+      default:
+        return;
+    }
+    notifyListeners();
+    if (hotKey != null) {
+      await prefs.setString(key, jsonEncode(hotKey.toJson()));
+    } else {
+      await prefs.remove(key);
+    }
+  }
+
+  Future<void> resetToDefaultHotKeys() async {
+    final prefs = await SharedPreferences.getInstance();
+    _playPauseHotKey = _getDefaultHotKey('play_pause');
+    _nextTrackHotKey = _getDefaultHotKey('next_track');
+    _prevTrackHotKey = _getDefaultHotKey('prev_track');
+    _volumeUpHotKey = _getDefaultHotKey('volume_up');
+    _volumeDownHotKey = _getDefaultHotKey('volume_down');
+    notifyListeners();
+    await prefs.setString(
+      _playPauseHotKeyKey,
+      jsonEncode(_playPauseHotKey!.toJson()),
+    );
+    await prefs.setString(
+      _nextTrackHotKeyKey,
+      jsonEncode(_nextTrackHotKey!.toJson()),
+    );
+    await prefs.setString(
+      _prevTrackHotKeyKey,
+      jsonEncode(_prevTrackHotKey!.toJson()),
+    );
+    await prefs.setString(
+      _volumeUpHotKeyKey,
+      jsonEncode(_volumeUpHotKey!.toJson()),
+    );
+    await prefs.setString(
+      _volumeDownHotKeyKey,
+      jsonEncode(_volumeDownHotKey!.toJson()),
+    );
   }
 }

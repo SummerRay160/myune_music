@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_web_scroll/flutter_web_scroll.dart';
+import 'package:silky_scroll/silky_scroll.dart';
+import '../../theme/scroll_config.dart';
 import '../playlist/playlist_content_widget.dart';
 import '../playlist/playlist_content_notifier.dart';
 import '../../widgets/sort_dialog.dart';
@@ -137,11 +138,14 @@ class _AllSongsPageState extends State<AllSongsPage> {
                           );
                         }
 
-                        return SmoothScrollWeb(
+                        return SilkyScroll(
                           controller: _scrollController,
-                          config: SmoothScrollConfig.lenis(),
-                          child: CustomScrollView(
-                            controller: _scrollController,
+                          silkyScrollDuration: ScrollConfig.duration,
+                          scrollSpeed: ScrollConfig.speed,
+                          animationCurve: ScrollConfig.curve,
+                          builder: (context, controller, physics, _) => CustomScrollView(
+                            controller: controller,
+                            physics: physics,
                             slivers: [
                               SliverReorderableList(
                                 proxyDecorator: (child, index, animation) =>
@@ -154,9 +158,6 @@ class _AllSongsPageState extends State<AllSongsPage> {
                                 itemCount: songs.length,
                                 itemBuilder: (context, index) {
                                   final song = songs[index];
-                                  // 播放时需要找到它在原始 allSongs 列表中的索引
-                                  final originalIndex = notifier.allSongs
-                                      .indexOf(song);
                                   return SongTileWidget(
                                     key: ValueKey(song.filePath),
                                     song: song,
@@ -165,10 +166,14 @@ class _AllSongsPageState extends State<AllSongsPage> {
                                         notifier.allSongsVirtualPlaylist,
                                     enableContextMenu: false,
                                     onTap: () {
-                                      if (originalIndex != -1) {
-                                        notifier.playSongFromAllSongs(
-                                          originalIndex,
+                                      if (notifier.isSearching) {
+                                        // 搜索模式下使用当前渲染列表快照，避免索引错位
+                                        notifier.playFromDynamicList(
+                                          List<Song>.from(songs),
+                                          index,
                                         );
+                                      } else {
+                                        notifier.playSongFromAllSongs(index);
                                       }
                                     },
                                   );
