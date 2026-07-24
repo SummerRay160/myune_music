@@ -7,7 +7,8 @@ import '../../theme/scroll_config.dart';
 import '../playlist/playlist_content_notifier.dart';
 import '../../widgets/single_line_lyrics.dart';
 import 'album_detail_view.dart';
-import 'package:pinyin/pinyin.dart';
+import '../../services/pinyin_cache.dart';
+import '../playlist/playlist_models.dart';
 
 class AlbumList extends StatefulWidget {
   const AlbumList({super.key});
@@ -31,6 +32,9 @@ class _AlbumListState extends State<AlbumList> {
   String _searchKeyword = '';
   bool _hideSingleSongAlbums = false;
 
+  List<String>? _cachedSortedAlbums;
+  Map<String, List<dynamic>>? _lastAlbumData;
+
   void _closeAlbumDetail() {
     final notifier = context.read<PlaylistContentNotifier>();
     final navNotifier = context.read<NavigationNotifier>();
@@ -45,22 +49,15 @@ class _AlbumListState extends State<AlbumList> {
     }
   }
 
-  void sortAlbums(List<String> albumNames) {
-    final Map<String, String> cache = {};
-
-    String getPy(String s) {
-      if (cache.containsKey(s)) return cache[s]!;
-      final py = PinyinHelper.getPinyin(s, separator: '').toLowerCase().trim();
-      final result = py.isEmpty ? s.toLowerCase() : py;
-      cache[s] = result;
-      return result;
+  List<String> _getSortedAlbums(Map<String, List<Song>> albums) {
+    if (!identical(albums, _lastAlbumData)) {
+      _lastAlbumData = albums;
+      final names = albums.keys.toList();
+      final cache = PinyinCache.instance;
+      names.sort((a, b) => cache.getFullPinyin(a).compareTo(cache.getFullPinyin(b)));
+      _cachedSortedAlbums = names;
     }
-
-    albumNames.sort((a, b) {
-      final pa = getPy(a);
-      final pb = getPy(b);
-      return pa.compareTo(pb);
-    });
+    return _cachedSortedAlbums!;
   }
 
   @override
@@ -193,14 +190,24 @@ class _AlbumListState extends State<AlbumList> {
                       child: Builder(
                         builder: (context) {
                           final albums = notifier.songsByAlbum;
-                          var albumNames = albums.keys.toList();
+                          // 使用缓存的排序结果
+                          var albumNames = _getSortedAlbums(albums).toList();
 
-                          // 应用搜索过滤逻辑
+                          // 应用搜索过滤逻辑（支持拼音搜索）
                           if (_searchKeyword.isNotEmpty) {
+                            final lowerKeyword = _searchKeyword.toLowerCase();
+                            final isLatin = RegExp(r'^[a-z0-9]+$').hasMatch(lowerKeyword);
                             albumNames = albumNames.where((name) {
-                              return name.toLowerCase().contains(
-                                _searchKeyword.toLowerCase(),
-                              );
+                              // 直接字符串匹配
+                              if (name.toLowerCase().contains(lowerKeyword)) return true;
+                              // 拼音匹配（仅拉丁字符输入时）
+                              if (isLatin) {
+                                final pinyin = PinyinCache.instance.getFullPinyin(name);
+                                if (pinyin.contains(lowerKeyword)) return true;
+                                final initials = PinyinCache.instance.getInitials(name);
+                                if (initials.contains(lowerKeyword)) return true;
+                              }
+                              return false;
                             }).toList();
                           }
 
@@ -210,9 +217,6 @@ class _AlbumListState extends State<AlbumList> {
                               return albums[name]!.length > 1;
                             }).toList();
                           }
-
-                          // 拼音排序
-                          sortAlbums(albumNames);
 
                           if (albumNames.isEmpty) {
                             return Center(
