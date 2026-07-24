@@ -30,7 +30,6 @@ class _ArtistListState extends State<ArtistList> {
 
   bool _isSearching = false;
   String _searchKeyword = '';
-  bool _hideSingleSongArtists = false;
 
   List<String>? _cachedSortedArtists;
   Map<String, List<dynamic>>? _lastArtistData;
@@ -156,20 +155,18 @@ class _ArtistListState extends State<ArtistList> {
                               const Spacer(),
                               IconButton(
                                 icon: Icon(
-                                  _hideSingleSongArtists
+                                  notifier.hideSingleSongArtists
                                       ? Icons.filter_alt_off_outlined
                                       : Icons.filter_alt_outlined,
-                                  color: _hideSingleSongArtists
+                                  color: notifier.hideSingleSongArtists
                                       ? Theme.of(context).colorScheme.primary
                                       : null,
                                 ),
-                                tooltip: _hideSingleSongArtists
+                                tooltip: notifier.hideSingleSongArtists
                                     ? '显示所有歌手'
                                     : '隐藏只有单首歌曲的歌手',
-                                onPressed: () => setState(() {
-                                  _hideSingleSongArtists =
-                                      !_hideSingleSongArtists;
-                                }),
+                                onPressed: () =>
+                                    notifier.toggleHideSingleSongArtists(),
                               ),
                               IconButton(
                                 icon: const Icon(Icons.search),
@@ -211,7 +208,7 @@ class _ArtistListState extends State<ArtistList> {
                           }
 
                           // 应用单曲歌手过滤逻辑
-                          if (_hideSingleSongArtists) {
+                          if (notifier.hideSingleSongArtists) {
                             artistNames = artistNames.where((name) {
                               return artists[name]!.length > 1;
                             }).toList();
