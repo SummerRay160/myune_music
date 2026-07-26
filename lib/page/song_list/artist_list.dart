@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../layout/navigation_notifier.dart';
-import 'package:pinyin/pinyin.dart';
+import '../../services/pinyin_cache.dart';
+import '../playlist/playlist_models.dart';
 import 'package:provider/provider.dart';
 import 'package:silky_scroll/silky_scroll.dart';
 import '../../theme/scroll_config.dart';
@@ -29,7 +30,9 @@ class _ArtistListState extends State<ArtistList> {
 
   bool _isSearching = false;
   String _searchKeyword = '';
-  bool _hideSingleSongArtists = false;
+
+  List<String>? _cachedSortedArtists;
+  Map<String, List<dynamic>>? _lastArtistData;
 
   void _closeArtistDetail() {
     final notifier = context.read<PlaylistContentNotifier>();
@@ -45,22 +48,15 @@ class _ArtistListState extends State<ArtistList> {
     }
   }
 
-  void sortArtists(List<String> artistNames) {
-    final Map<String, String> cache = {};
-
-    String getPy(String s) {
-      if (cache.containsKey(s)) return cache[s]!;
-      final py = PinyinHelper.getPinyin(s, separator: '').toLowerCase().trim();
-      final result = py.isEmpty ? s.toLowerCase() : py;
-      cache[s] = result;
-      return result;
+  List<String> _getSortedArtists(Map<String, List<Song>> artists) {
+    if (!identical(artists, _lastArtistData)) {
+      _lastArtistData = artists;
+      final names = artists.keys.toList();
+      final cache = PinyinCache.instance;
+      names.sort((a, b) => cache.getFullPinyin(a).compareTo(cache.getFullPinyin(b)));
+      _cachedSortedArtists = names;
     }
-
-    artistNames.sort((a, b) {
-      final pa = getPy(a);
-      final pb = getPy(b);
-      return pa.compareTo(pb);
-    });
+    return _cachedSortedArtists!;
   }
 
   @override
@@ -159,20 +155,18 @@ class _ArtistListState extends State<ArtistList> {
                               const Spacer(),
                               IconButton(
                                 icon: Icon(
-                                  _hideSingleSongArtists
+                                  notifier.hideSingleSongArtists
                                       ? Icons.filter_alt_off_outlined
                                       : Icons.filter_alt_outlined,
-                                  color: _hideSingleSongArtists
+                                  color: notifier.hideSingleSongArtists
                                       ? Theme.of(context).colorScheme.primary
                                       : null,
                                 ),
-                                tooltip: _hideSingleSongArtists
+                                tooltip: notifier.hideSingleSongArtists
                                     ? '显示所有歌手'
                                     : '隐藏只有单首歌曲的歌手',
-                                onPressed: () => setState(() {
-                                  _hideSingleSongArtists =
-                                      !_hideSingleSongArtists;
-                                }),
+                                onPressed: () =>
+                                    notifier.toggleHideSingleSongArtists(),
                               ),
                               IconButton(
                                 icon: const Icon(Icons.search),
@@ -192,26 +186,33 @@ class _ArtistListState extends State<ArtistList> {
                       child: Builder(
                         builder: (context) {
                           final artists = notifier.songsByArtist;
-                          var artistNames = artists.keys.toList();
+                          // 使用缓存的排序结果
+                          var artistNames = _getSortedArtists(artists).toList();
 
-                          // 应用搜索过滤逻辑
+                          // 应用搜索过滤逻辑（支持拼音搜索）
                           if (_searchKeyword.isNotEmpty) {
+                            final lowerKeyword = _searchKeyword.toLowerCase();
+                            final isLatin = RegExp(r'^[a-z0-9]+$').hasMatch(lowerKeyword);
                             artistNames = artistNames.where((name) {
-                              return name.toLowerCase().contains(
-                                _searchKeyword.toLowerCase(),
-                              );
+                              // 直接字符串匹配
+                              if (name.toLowerCase().contains(lowerKeyword)) return true;
+                              // 拼音匹配（仅拉丁字符输入时）
+                              if (isLatin) {
+                                final pinyin = PinyinCache.instance.getFullPinyin(name);
+                                if (pinyin.contains(lowerKeyword)) return true;
+                                final initials = PinyinCache.instance.getInitials(name);
+                                if (initials.contains(lowerKeyword)) return true;
+                              }
+                              return false;
                             }).toList();
                           }
 
                           // 应用单曲歌手过滤逻辑
-                          if (_hideSingleSongArtists) {
+                          if (notifier.hideSingleSongArtists) {
                             artistNames = artistNames.where((name) {
                               return artists[name]!.length > 1;
                             }).toList();
                           }
-
-                          // 拼音排序
-                          sortArtists(artistNames);
 
                           if (artistNames.isEmpty) {
                             return Center(

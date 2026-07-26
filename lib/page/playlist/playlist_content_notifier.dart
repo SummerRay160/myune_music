@@ -24,6 +24,9 @@ import '../../theme/theme_provider.dart';
 import '../statistics_page/playback_tracker.dart';
 import '../../src/rust/api/audio_info.dart';
 import '../../services/global_hotkey_manager.dart';
+import '../../services/search_service.dart';
+import '../../services/search_index_store.dart';
+import '../../utils/search_debouncer.dart';
 
 enum SortCriterion { title, artist, dateModified, file, random, trackNumber }
 
@@ -209,6 +212,13 @@ class PlaylistContentNotifier extends ChangeNotifier {
   bool _isSearching = false; // 是否正在搜索（用于切换UI）
   List<Song> _filteredSongs = []; // 搜索结果列表
 
+  // --- 搜索优化 ---
+  final SearchService _searchService = SearchService();
+  final SearchIndexStore _searchIndexStore = SearchIndexStore();
+  final SearchDebouncer _searchDebouncer = SearchDebouncer();
+  List<SongSearchIndex> _allSongSearchIndices = [];
+  Map<String, PersistedIndexEntry> _persistedEntries = {};
+
   bool _disableHotKeys = false; // 是否禁用快捷键
 
   String get searchKeyword => _searchKeyword;
@@ -285,6 +295,22 @@ class PlaylistContentNotifier extends ChangeNotifier {
   DetailViewContext get currentDetailViewContext => _currentDetailViewContext;
   String get activeDetailTitle => _activeDetailTitle;
   List<Song> get activeSongList => _activeSongList;
+
+  // --- 专辑/歌手筛选状态（保存在 Notifier 中）---
+  bool _hideSingleSongAlbums = false;
+  bool _hideSingleSongArtists = false;
+  bool get hideSingleSongAlbums => _hideSingleSongAlbums;
+  bool get hideSingleSongArtists => _hideSingleSongArtists;
+
+  void toggleHideSingleSongAlbums() {
+    _hideSingleSongAlbums = !_hideSingleSongAlbums;
+    notifyListeners();
+  }
+
+  void toggleHideSingleSongArtists() {
+    _hideSingleSongArtists = !_hideSingleSongArtists;
+    notifyListeners();
+  }
 
   // --- 存储从JSON加载的排序信息 ---
   Map<String, List<String>> _artistSortOrders = {};
@@ -655,6 +681,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     _metadataCacheSaveTimer?.cancel();
     _equalizerApplyTimer?.cancel();
     _audioControlSaveTimer?.cancel();
+    _searchDebouncer.dispose();
     _saveSongMetadataCache();
     _saveAudioControlSettings();
     savePlaybackState();
@@ -3268,11 +3295,12 @@ class PlaylistContentNotifier extends ChangeNotifier {
     required bool descending,
   }) async {
     if (criterion == SortCriterion.file) {
-      final sortedPaths = List<String>.from(paths)..sort((a, b) {
-        final nameA = p.basename(a).toLowerCase();
-        final nameB = p.basename(b).toLowerCase();
-        return nameA.compareTo(nameB);
-      });
+      final sortedPaths = List<String>.from(paths)
+        ..sort((a, b) {
+          final nameA = p.basename(a).toLowerCase();
+          final nameB = p.basename(b).toLowerCase();
+          return nameA.compareTo(nameB);
+        });
       return descending ? sortedPaths.reversed.toList() : sortedPaths;
     }
 
@@ -5469,6 +5497,9 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
     _allSongs = dedupedSongs;
 
+    // 在后台 Isolate 中执行
+    unawaited(_buildSearchIndices());
+
     final finalPathOrder = _allSongs.map((s) => s.filePath).toList();
     await _playlistManager.saveAllSongsOrder(finalPathOrder);
 
@@ -5607,9 +5638,12 @@ class PlaylistContentNotifier extends ChangeNotifier {
   }
 
   void search(String keyword) {
-    _searchKeyword = keyword.toLowerCase();
-    _updateFilteredSongs();
-    notifyListeners();
+    _searchKeyword = keyword;
+    // 防抖：延迟 300ms 执行实际搜索，避免每次按键都全量过滤
+    _searchDebouncer.run(() {
+      _updateFilteredSongs();
+      notifyListeners();
+    });
   }
 
   void _updateFilteredSongs() {
@@ -5634,12 +5668,41 @@ class PlaylistContentNotifier extends ChangeNotifier {
       // 如果关键词为空，则显示完整的源列表
       _filteredSongs = List.from(sourceList);
     } else {
-      // 否则进行过滤
-      _filteredSongs = sourceList.where((song) {
-        final titleMatch = song.title.toLowerCase().contains(_searchKeyword);
-        final artistMatch = song.artist.toLowerCase().contains(_searchKeyword);
-        return titleMatch || artistMatch;
-      }).toList();
+      // 使用多路搜索策略：精确 → 拼音首字母 → 全拼 → 模糊
+      final indices = _getIndicesForSongs(sourceList);
+      final results = _searchService.search(_searchKeyword, indices);
+      _filteredSongs = results.map((r) => r.song).toList();
+    }
+  }
+
+  List<SongSearchIndex> _getIndicesForSongs(List<Song> songs) {
+    if (identical(songs, _allSongs) && _allSongSearchIndices.isNotEmpty) {
+      return _allSongSearchIndices;
+    }
+    // 从持久化条目快速构建索引（不调用 PinyinHelper）
+    return songs.map((song) {
+      final entry = _persistedEntries[song.filePath];
+      if (entry != null) {
+        return SongSearchIndex.fromPersisted(
+          song,
+          titlePinyin: entry.titlePinyin,
+          artistPinyin: entry.artistPinyin,
+          titleInitials: entry.titleInitials,
+          artistInitials: entry.artistInitials,
+        );
+      }
+      return SongSearchIndex(song); // 回退：实时构建
+    }).toList();
+  }
+
+  // 构建搜索索引
+  Future<void> _buildSearchIndices() async {
+    try {
+      final result = await _searchIndexStore.buildIndex(_allSongs);
+      _allSongSearchIndices = result.indices;
+      _persistedEntries = result.entries;
+    } catch (e) {
+      debugPrint('搜索索引构建失败: $e');
     }
   }
 
