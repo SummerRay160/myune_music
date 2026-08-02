@@ -5488,7 +5488,12 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
       final artist = song.artist.trim().toLowerCase();
       final title = song.title.trim().toLowerCase();
-      final key = '$artist|$title';
+      final album = song.album.trim().toLowerCase();
+
+      // https://github.com/xiaobaimc/myune_music/issues/111
+      final key = (album.isNotEmpty && album != '未知专辑')
+          ? '$artist|$title|$album'
+          : '$artist|$title';
 
       if (seen.add(key)) {
         dedupedSongs.add(song);
