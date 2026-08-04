@@ -11,6 +11,7 @@ import 'playlist_models.dart';
 import '../../widgets/sort_dialog.dart';
 import '../setting/settings_provider.dart';
 import '../../layout/navigation_notifier.dart';
+import '../../services/notification_service.dart';
 
 enum ManagementMode { manual, folder }
 
@@ -523,7 +524,7 @@ class _AddPlaylistDialogState extends State<_AddPlaylistDialog> {
           onPressed: () {
             if (_selectedMode == ManagementMode.folder &&
                 _selectedFolders.isEmpty) {
-              widget.notifier.postInfo('请选择至少一个文件夹');
+              context.read<NotificationService>().info('请选择至少一个文件夹');
               return;
             }
 
@@ -702,7 +703,7 @@ class _HeadSongListWidgetState extends State<HeadSongListWidget> {
     final notifier = context.read<PlaylistContentNotifier>();
     // 如果没有选中歌单或歌单为空，则不显示对话框
     if (notifier.selectedIndex < 0 || notifier.currentPlaylistSongs.isEmpty) {
-      notifier.postError('歌单为空或未选中，无法排序');
+      context.read<NotificationService>().error('歌单为空或未选中，无法排序');
       return;
     }
 
@@ -1205,7 +1206,7 @@ class _HeadSongListWidgetState extends State<HeadSongListWidget> {
   void _showDeleteConfirmationDialog(BuildContext context) {
     final notifier = context.read<PlaylistContentNotifier>();
     if (notifier.selectedSongs.isEmpty) {
-      notifier.postInfo('未选择任何歌曲');
+      context.read<NotificationService>().info('未选择任何歌曲');
       return;
     }
 
@@ -1237,7 +1238,7 @@ class _HeadSongListWidgetState extends State<HeadSongListWidget> {
     final notifier = context.read<PlaylistContentNotifier>();
     final selectedCount = notifier.selectedSongs.length;
     if (selectedCount == 0) {
-      notifier.postInfo('未选择任何歌曲');
+      context.read<NotificationService>().info('未选择任何歌曲');
       return;
     }
 
@@ -1457,7 +1458,7 @@ class _HeadSongListWidgetState extends State<HeadSongListWidget> {
   void _showAddToPlaylistDialog(BuildContext context) {
     final notifier = context.read<PlaylistContentNotifier>();
     if (notifier.selectedSongs.isEmpty) {
-      notifier.postInfo('未选择任何歌曲');
+      context.read<NotificationService>().info('未选择任何歌曲');
       return;
     }
 
@@ -1876,12 +1877,14 @@ class _SongTileWidgetState extends State<SongTileWidget> {
           await Process.run('xdg-open', [directory]);
         }
       } catch (e) {
-        notifier.postError('打开文件位置失败');
+        if (mounted) {
+          context.read<NotificationService>().error('打开文件位置失败');
+        }
       }
     } else if (result == 'goToSongDetails') {
       final settings = context.read<SettingsProvider>();
       if (settings.hiddenPages.contains('歌曲详情信息')) {
-        notifier.postInfo('歌曲详情页已被隐藏，无法跳转');
+        context.read<NotificationService>().info('歌曲详情页已被隐藏，无法跳转');
         return;
       }
       notifier.setViewingSong(widget.song);
@@ -1891,7 +1894,7 @@ class _SongTileWidgetState extends State<SongTileWidget> {
     } else if (result == 'goToAlbum') {
       final settings = context.read<SettingsProvider>();
       if (settings.hiddenPages.contains('专辑')) {
-        notifier.postInfo('专辑页已被隐藏，无法跳转');
+        context.read<NotificationService>().info('专辑页已被隐藏，无法跳转');
         return;
       }
       notifier.setActiveAlbumView(widget.song.album);
@@ -1901,7 +1904,7 @@ class _SongTileWidgetState extends State<SongTileWidget> {
     } else if (result.startsWith('goToArtist_')) {
       final settings = context.read<SettingsProvider>();
       if (settings.hiddenPages.contains('歌手')) {
-        notifier.postInfo('歌手页已被隐藏，无法跳转');
+        context.read<NotificationService>().info('歌手页已被隐藏，无法跳转');
         return;
       }
       final artist = result.substring('goToArtist_'.length);
@@ -1968,9 +1971,13 @@ class _SongTileWidgetState extends State<SongTileWidget> {
                             Navigator.of(dialogContext).pop();
                             // 根据返回值给出不同提示
                             if (addedCount > 0) {
-                              notifier.postInfo('已添加到歌单「${playlist.name}」');
+                              dialogContext.read<NotificationService>().info(
+                                '已添加到歌单「${playlist.name}」',
+                              );
                             } else {
-                              notifier.postInfo('歌曲已存在于歌单「${playlist.name}」');
+                              dialogContext.read<NotificationService>().info(
+                                '歌曲已存在于歌单「${playlist.name}」',
+                              );
                             }
                           }
                         },

@@ -5,6 +5,7 @@ import 'dart:io';
 import '../playlist/playlist_content_notifier.dart';
 import '../playlist/playlist_models.dart';
 import '../statistics_page/statistics_manager.dart';
+import '../../services/notification_service.dart';
 
 class SongDetailsPage extends StatelessWidget {
   const SongDetailsPage({super.key});
@@ -131,7 +132,7 @@ class SongDetailsPage extends StatelessWidget {
                             trailing: IconButton(
                               icon: const Icon(Icons.open_in_new, size: 18),
                               onPressed: () {
-                                _openFileLocation(details.filePath, notifier);
+                                _openFileLocation(context, details.filePath);
                               },
                               tooltip: '打开文件所在位置',
                               padding: EdgeInsets.zero,
@@ -213,8 +214,8 @@ class SongDetailsPage extends StatelessWidget {
   }
 
   void _openFileLocation(
+    BuildContext context,
     String filePath,
-    PlaylistContentNotifier notifier,
   ) async {
     try {
       final directory = File(filePath).parent.path;
@@ -228,7 +229,9 @@ class SongDetailsPage extends StatelessWidget {
         await Process.run('xdg-open', [directory]);
       }
     } catch (e) {
-      notifier.postError('打开文件位置失败');
+      if (context.mounted) {
+        context.read<NotificationService>().error('打开文件位置失败');
+      }
     }
   }
 

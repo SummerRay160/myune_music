@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:markdown_widget/markdown_widget.dart';
-
+import '../../../services/notification_service.dart';
 import '../../playlist/playlist_content_notifier.dart';
+
 import '../theme_selection_screen.dart';
 import '../../../theme/theme_provider.dart';
 import '../settings_provider.dart';
@@ -25,7 +26,6 @@ class _GeneralTabState extends State<GeneralTab> {
 
   // 检查更新
   Future<void> _checkForUpdates() async {
-    final notifier = context.read<PlaylistContentNotifier>();
 
     setState(() {
       _isCheckingUpdate = true;
@@ -33,7 +33,7 @@ class _GeneralTabState extends State<GeneralTab> {
     });
 
     try {
-      notifier.postInfo('正在检查更新...');
+      context.read<NotificationService>().info('正在检查更新...');
 
       // 使用写好的版本号
       final result = await UpdateChecker.checkForUpdates(appVersion);
@@ -42,7 +42,7 @@ class _GeneralTabState extends State<GeneralTab> {
 
       switch (result.type) {
         case UpdateCheckResultType.successUpdateAvailable:
-          notifier.postInfo('发现新版本 ${result.updateInfo!.latestVersion}');
+          context.read<NotificationService>().info('发现新版本 ${result.updateInfo!.latestVersion}');
           setState(() {
             _isCheckingUpdate = false;
             _updateStatus = '发现新版本 ${result.updateInfo!.latestVersion}';
@@ -50,14 +50,14 @@ class _GeneralTabState extends State<GeneralTab> {
           _showUpdateDialog(result.updateInfo!);
           break;
         case UpdateCheckResultType.successNoUpdate:
-          notifier.postInfo('当前已是最新版本');
+          context.read<NotificationService>().info('当前已是最新版本');
           setState(() {
             _isCheckingUpdate = false;
             _updateStatus = '当前已是最新版本';
           });
           break;
         case UpdateCheckResultType.error:
-          notifier.postError('检查更新失败: ${result.errorMessage}');
+          context.read<NotificationService>().error('检查更新失败: ${result.errorMessage}');
           setState(() {
             _isCheckingUpdate = false;
             _updateStatus = '检查更新失败: ${result.errorMessage}';
@@ -66,7 +66,7 @@ class _GeneralTabState extends State<GeneralTab> {
       }
     } catch (e) {
       if (!mounted) return;
-      notifier.postError('检查更新失败: ${e.toString()}');
+      context.read<NotificationService>().error('检查更新失败: ${e.toString()}');
       setState(() {
         _isCheckingUpdate = false;
         _updateStatus = '检查更新失败: ${e.toString()}';

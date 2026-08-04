@@ -16,6 +16,7 @@ import 'hot_keys.dart';
 import 'theme/theme_provider.dart';
 import 'layout/app_shell.dart';
 import 'page/playlist/playlist_content_notifier.dart';
+import 'services/notification_service.dart';
 import 'page/setting/settings_provider.dart';
 import 'src/rust/frb_generated.dart';
 import 'package:flutter_single_instance/flutter_single_instance.dart';
@@ -119,10 +120,12 @@ void main() async {
       providers: [
         ChangeNotifierProvider(create: (_) => SettingsProvider()),
         ChangeNotifierProvider.value(value: themeProvider),
+        ChangeNotifierProvider(create: (_) => NotificationService()),
         ChangeNotifierProvider(
           create: (context) => PlaylistContentNotifier(
             context.read<SettingsProvider>(),
             context.read<ThemeProvider>(),
+            context.read<NotificationService>(),
           ),
         ),
         ChangeNotifierProvider<StatisticsManager>(

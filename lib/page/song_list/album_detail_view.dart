@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../../widgets/sort_dialog.dart';
 import '../playlist/playlist_content_notifier.dart';
 import 'song_list_detail_page.dart';
+import '../../services/notification_service.dart';
 
 class AlbumDetailView extends StatelessWidget {
   final VoidCallback onBack;
@@ -17,7 +18,7 @@ class AlbumDetailView extends StatelessWidget {
   Future<void> _showSortDialog(BuildContext context) async {
     final notifier = context.read<PlaylistContentNotifier>();
     if (notifier.activeSongList.isEmpty) {
-      notifier.postError('没有歌曲可以排序');
+      context.read<NotificationService>().error('没有歌曲可以排序');
       return;
     }
 

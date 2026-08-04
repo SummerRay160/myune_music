@@ -9,6 +9,7 @@ import '../playlist/playlist_models.dart';
 import '../../widgets/app_window_title_bar.dart';
 import '../../widgets/playbar.dart';
 import '../../widgets/playing_queue_drawer.dart';
+import '../../services/notification_service.dart';
 
 class SongListDetailPage extends StatelessWidget {
   const SongListDetailPage({super.key});
@@ -16,7 +17,7 @@ class SongListDetailPage extends StatelessWidget {
   void _showSortDialog(BuildContext context) async {
     final notifier = context.read<PlaylistContentNotifier>();
     if (notifier.activeSongList.isEmpty) {
-      notifier.postError('没有歌曲可以排序');
+      context.read<NotificationService>().error('没有歌曲可以排序');
       return;
     }
 

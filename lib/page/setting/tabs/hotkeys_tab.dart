@@ -8,6 +8,7 @@ import '../../../theme/scroll_config.dart';
 import '../settings_provider.dart';
 import '../../playlist/playlist_content_notifier.dart';
 import '../../../services/global_hotkey_manager.dart';
+import '../../../services/notification_service.dart';
 
 class HotkeysTab extends StatefulWidget {
   const HotkeysTab({super.key});
@@ -79,6 +80,9 @@ class _HotkeysTabState extends State<HotkeysTab> {
                 ElevatedButton.icon(
                   onPressed: () async {
                     final notifier = context.read<PlaylistContentNotifier>();
+                    final notificationService = context
+                        .read<NotificationService>();
+
                     // First unregister all
                     await GlobalHotkeyManager().unregisterAll();
                     // Reset settings
@@ -90,7 +94,9 @@ class _HotkeysTabState extends State<HotkeysTab> {
                         settings,
                       );
                     }
-                    notifier.postInfo('已恢复默认快捷键');
+                    if (mounted) {
+                      notificationService.info('已恢复默认快捷键');
+                    }
                   },
                   icon: const Icon(Icons.restore, size: 18),
                   label: const Text('恢复默认'),

@@ -26,6 +26,7 @@ import '../../src/rust/api/audio_info.dart';
 import '../../services/global_hotkey_manager.dart';
 import '../../services/search_service.dart';
 import '../../services/search_index_store.dart';
+import '../../services/notification_service.dart';
 import '../../utils/search_debouncer.dart';
 
 enum SortCriterion { title, artist, dateModified, file, random, trackNumber }
@@ -68,6 +69,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
   final PlaylistManager _playlistManager = PlaylistManager();
   final SettingsProvider _settingsProvider;
   final ThemeProvider _themeProvider;
+  final NotificationService _notificationService;
 
   bool _allSongsLoaded = false; // 表示全部歌曲是否已加载完成
   bool get allSongsLoaded => _allSongsLoaded;
@@ -331,21 +333,15 @@ class PlaylistContentNotifier extends ChangeNotifier {
   bool _gaplessEnabled = false; // 是否启用无缝播放
   bool _isGaplessTransitioning = false; // 防止重入的标记
 
-  // --- 消息通知 ---
-  final StreamController<String> _errorStreamController =
-      StreamController<String>.broadcast(); // 错误信息流
-
-  final StreamController<String> _infoStreamController =
-      StreamController<String>.broadcast(); // 普通信息流
-
-  Stream<String> get errorStream => _errorStreamController.stream;
-  Stream<String> get infoStream => _infoStreamController.stream;
-
   DateTime? _lastDeviceErrorLogged;
   // 限制日志写入间隔
   static const Duration _audioDeviceErrorInterval = Duration(seconds: 5);
 
-  PlaylistContentNotifier(this._settingsProvider, this._themeProvider) {
+  PlaylistContentNotifier(
+    this._settingsProvider,
+    this._themeProvider,
+    this._notificationService,
+  ) {
     _setupMediaPlayerListeners(); // 设置 media-kit 的监听器
     _initLogFile();
     _loadAllData(); // 使用一个统一的方法来加载所有数据
@@ -673,7 +669,6 @@ class PlaylistContentNotifier extends ChangeNotifier {
   // --- 播放器相关 ---
   void dispose() {
     _lyricLineIndexController.close();
-    _errorStreamController.close();
     _exclusiveModeSubscription?.cancel(); // 取消独占模式订阅
     _loudnessSubscription?.cancel(); // 取消响度流订阅
     _safeDispose(); // 释放播放器资源
@@ -760,11 +755,12 @@ class PlaylistContentNotifier extends ChangeNotifier {
           !_settingsProvider.audioDeviceIsAuto) {
         final selected = _selectedDevice;
         if (selected != null && selected.name != 'auto') {
-          final stillExists = _audioService.player.state.audioDevices
-              .any((d) => d.name == selected.name);
+          final stillExists = _audioService.player.state.audioDevices.any(
+            (d) => d.name == selected.name,
+          );
           if (!stillExists) {
             useAutoDevice();
-            _infoStreamController.add('所选音频设备已移除，已自动切换到默认设备');
+            _notificationService.info('所选音频设备已移除，已自动切换到默认设备');
             return;
           }
         }
@@ -779,14 +775,14 @@ class PlaylistContentNotifier extends ChangeNotifier {
         final errorMessage =
             '播放 ${p.basename(_currentSong!.filePath)} 出错: $error';
         if (shouldNotifyUI) {
-          _errorStreamController.add(errorMessage);
+          _notificationService.error(errorMessage);
         }
         // 记录详细错误信息到日志文件
         _writeErrorToLog(errorMessage, error);
         debugPrint('播放${p.basename(_currentSong!.filePath)}出错: $error');
       } else {
         final errorMessage = '播放出错: $error';
-        _errorStreamController.add(errorMessage);
+        _notificationService.error(errorMessage);
         // 记录详细错误信息到日志文件
         _writeErrorToLog(errorMessage, error);
       }
@@ -1380,7 +1376,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
   Future<bool> pickAndAddSongs() async {
     if (_selectedIndex == -1) {
-      _infoStreamController.add('请先在左侧选择一个要添加歌曲的歌单');
+      _notificationService.info('请先在左侧选择一个要添加歌曲的歌单');
       return false;
     }
 
@@ -1440,7 +1436,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     }
     // 如果确实选择了文件，但 newSongPaths 为空，说明选择是重复歌曲
     else if (result.files.isNotEmpty) {
-      _infoStreamController.add('所选歌曲已存在于当前歌单中');
+      _notificationService.info('所选歌曲已存在于当前歌单中');
       return false;
     }
     // 其他情况不提示
@@ -1497,9 +1493,9 @@ class PlaylistContentNotifier extends ChangeNotifier {
       }
       await _updateAllSongsList();
 
-      _infoStreamController.add('成功添加 ${newSongPaths.length} 首歌曲');
+      _notificationService.info('成功添加 ${newSongPaths.length} 首歌曲');
     } catch (e, stackTrace) {
-      _errorStreamController.add('添加歌曲时发生错误: $e');
+      _notificationService.error('添加歌曲时发生错误: $e');
       _writeErrorToLog('添加歌曲时发生错误', e);
       debugPrint('添加歌曲错误详情: $e\nStack trace: $stackTrace');
 
@@ -1522,12 +1518,12 @@ class PlaylistContentNotifier extends ChangeNotifier {
     final trimmedName = name.trim();
 
     if (trimmedName.isEmpty) {
-      _infoStreamController.add('歌单名称不能为空');
+      _notificationService.info('歌单名称不能为空');
       return false; // 失败
     }
 
     if (_playlists.any((playlist) => playlist.name == trimmedName)) {
-      _infoStreamController.add('歌单名称 $trimmedName 已存在');
+      _notificationService.info('歌单名称 $trimmedName 已存在');
       return false; // 失败
     }
 
@@ -1551,7 +1547,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     _savePlaylists();
     _loadCurrentPlaylistSongs(); // 加载当前播放列表歌曲
     _updateAllSongsList(); // 更新所有歌曲列表
-    _infoStreamController.add('已成功创建歌单 $trimmedName');
+    _notificationService.info('已成功创建歌单 $trimmedName');
 
     notifyListeners();
     return true; // 成功
@@ -1688,14 +1684,14 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
       // 显示操作结果信息
       if (addedPaths.isNotEmpty || removedPathsNormalized.isNotEmpty) {
-        _infoStreamController.add(
+        _notificationService.info(
           '刷新完成：新增 ${addedPaths.length} 首歌曲，移除 ${removedPathsNormalized.length} 首歌曲',
         );
       } else {
-        _infoStreamController.add('刷新完成：没有发现变化');
+        _notificationService.info('刷新完成：没有发现变化');
       }
     } catch (e) {
-      _errorStreamController.add('扫描文件夹时出错: $e');
+      _notificationService.error('扫描文件夹时出错: $e');
     } finally {
       _isLoadingSongs = false;
       notifyListeners();
@@ -1792,7 +1788,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     // 重新扫描文件夹内容
     _scanFoldersAndAddSongs(playlist.folderPaths);
 
-    _infoStreamController.add('已更新 ${playlist.name}');
+    _notificationService.info('已更新 ${playlist.name}');
     notifyListeners();
   }
 
@@ -1808,9 +1804,9 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
     try {
       await _scanFoldersAndAddSongs(playlist.folderPaths);
-      // _infoStreamController.add('已刷新文件夹内容');
+      // _notificationService.info('已刷新文件夹内容');
     } catch (e) {
-      // _errorStreamController.add('刷新文件夹内容时出错: $e');
+      // _notificationService.error('刷新文件夹内容时出错: $e');
     } finally {
       _isLoadingSongs = false;
       notifyListeners();
@@ -1825,7 +1821,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
     final playlistToDelete = _playlists[index];
     if (playlistToDelete.isDefault) {
-      _errorStreamController.add('默认歌单不可删除');
+      _notificationService.error('默认歌单不可删除');
       return false;
     }
 
@@ -1866,7 +1862,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     } else {
       notifyListeners();
     }
-    _infoStreamController.add('已删除歌单 “$deletedPlaylistName”');
+    _notificationService.info('已删除歌单 “$deletedPlaylistName”');
 
     return true; // 表示删除成功
   }
@@ -1876,7 +1872,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
     // 检查名称是否为空
     if (trimmedName.isEmpty) {
-      _infoStreamController.add('歌单名称不能为空');
+      _notificationService.info('歌单名称不能为空');
       return false; // 操作失败
     }
 
@@ -1884,7 +1880,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     if (_playlists.any(
       (p) => p.name == trimmedName && _playlists.indexOf(p) != index,
     )) {
-      _infoStreamController.add('歌单名称 "$trimmedName" 已存在');
+      _notificationService.info('歌单名称 "$trimmedName" 已存在');
       return false; // 操作失败
     }
 
@@ -1896,7 +1892,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
     _savePlaylists();
 
-    _infoStreamController.add('已将歌单 “$oldName” 重命名为 “$trimmedName”');
+    _notificationService.info('已将歌单 “$oldName” 重命名为 “$trimmedName”');
     notifyListeners();
 
     return true;
@@ -1922,12 +1918,12 @@ class PlaylistContentNotifier extends ChangeNotifier {
     final trimmedName = playlistName.trim();
 
     if (trimmedName.isEmpty) {
-      _infoStreamController.add('歌单名称不能为空');
+      _notificationService.info('歌单名称不能为空');
       return false;
     }
 
     if (_playlists.any((playlist) => playlist.name == trimmedName)) {
-      _infoStreamController.add('歌单名称 "$trimmedName" 已存在');
+      _notificationService.info('歌单名称 "$trimmedName" 已存在');
       return false;
     }
 
@@ -1942,7 +1938,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
       await _updateAllSongsList();
 
-      _infoStreamController.add(
+      _notificationService.info(
         '已成功创建歌单 "$trimmedName"，包含 ${queue.length} 首歌曲',
       );
 
@@ -2715,7 +2711,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     // 如果没有正在播放的歌单，创建一个临时播放列表
     if (_playingPlaylist == null) {
       await playFromDynamicList(songs, 0);
-      _infoStreamController.add('已添加 ${songs.length} 首歌曲到播放队列');
+      _notificationService.info('已添加 ${songs.length} 首歌曲到播放队列');
       return;
     }
 
@@ -2756,7 +2752,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     }
 
     if (message.isNotEmpty) {
-      _infoStreamController.add(message);
+      _notificationService.info(message);
     }
 
     _refreshGaplessNext();
@@ -2774,7 +2770,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     // 如果没有正在播放的歌单，创建一个临时播放列表，只有这首歌
     if (_playingPlaylist == null) {
       await playFromDynamicList([song], 0);
-      _infoStreamController.add('已将歌曲设置为下一首：${song.title}');
+      _notificationService.info('已将歌曲设置为下一首：${song.title}');
       return;
     }
 
@@ -2843,7 +2839,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
       _currentPlayingQueueFilePaths!.insert(nextIndex, song.filePath);
     }
 
-    _infoStreamController.add('已将歌曲设置为下一首：${song.title}');
+    _notificationService.info('已将歌曲设置为下一首：${song.title}');
 
     _refreshGaplessNext();
 
@@ -2965,7 +2961,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       // 捕获所有播放相关的异常
-      // _errorStreamController.add('无法播放${p.basename(songFilePath)}，可能文件已经损坏');
+      // _notificationService.error('无法播放${p.basename(songFilePath)}，可能文件已经损坏');
     }
   }
 
@@ -2978,7 +2974,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
         await _audioService.player.setAudioExclusive(true);
         _isExclusiveModeEnabled = true;
       } catch (e) {
-        _errorStreamController.add('启用独占模式失败: $e');
+        _notificationService.error('启用独占模式失败: $e');
         _isExclusiveModeEnabled = false;
       }
     } else {
@@ -2986,7 +2982,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
         await _audioService.player.setAudioExclusive(false);
         _isExclusiveModeEnabled = false;
       } catch (e) {
-        _errorStreamController.add('禁用独占模式失败: $e');
+        _notificationService.error('禁用独占模式失败: $e');
       }
     }
 
@@ -3018,19 +3014,20 @@ class PlaylistContentNotifier extends ChangeNotifier {
       _audioService.player.stream.audioOutputState
           .where((state) => state == AudioOutputState.failed)
           .listen((_) {
-        if (_settingsProvider.audioDeviceIsAuto) return;
-        final selected = _selectedDevice;
-        if (selected == null || selected.name == 'auto') return;
-        // 结合设备列表判断选中设备是否真的消失
-        final stillExists = _audioService.player.state.audioDevices
-            .any((d) => d.name == selected.name);
-        if (!stillExists) {
-          useAutoDevice();
-          _infoStreamController.add('所选音频设备已移除，已自动切换到默认设备');
-        }
-      });
+            if (_settingsProvider.audioDeviceIsAuto) return;
+            final selected = _selectedDevice;
+            if (selected == null || selected.name == 'auto') return;
+            // 结合设备列表判断选中设备是否真的消失
+            final stillExists = _audioService.player.state.audioDevices.any(
+              (d) => d.name == selected.name,
+            );
+            if (!stillExists) {
+              useAutoDevice();
+              _notificationService.info('所选音频设备已移除，已自动切换到默认设备');
+            }
+          });
     } catch (e) {
-      _errorStreamController.add('加载音频设备时出错: $e');
+      _notificationService.error('加载音频设备时出错: $e');
     }
   }
 
@@ -3062,7 +3059,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     } catch (e) {
       // firstWhere 没找到会抛出异常，说明上次保存的设备当前不可用
       // 此时不做任何操作，保持auto即可
-      _errorStreamController.add('恢复音频设备失败: $e');
+      _notificationService.error('恢复音频设备失败: $e');
       _settingsProvider.setAudioDeviceToAuto();
     }
   }
@@ -3076,7 +3073,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
       _settingsProvider.setAudioDevice(device.name, device.description);
     } catch (e) {
-      _errorStreamController.add('设置音频设备失败: $e');
+      _notificationService.error('设置音频设备失败: $e');
     }
   }
 
@@ -3091,7 +3088,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
       _settingsProvider.setAudioDeviceToAuto();
     } catch (e) {
-      _errorStreamController.add('设置自动音频设备失败: $e');
+      _notificationService.error('设置自动音频设备失败: $e');
     }
   }
 
@@ -3293,7 +3290,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     if (oldIndex == newIndex) return;
 
     if (_playlists[oldIndex].isDefault || _playlists[newIndex].isDefault) {
-      _infoStreamController.add('默认歌单不能改变顺序');
+      _notificationService.info('默认歌单不能改变顺序');
       notifyListeners();
       return;
     }
@@ -3561,7 +3558,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
       final file = File(normalizedPath);
 
       if (!await file.exists()) {
-        _errorStreamController.add('歌曲文件不存在：${p.basename(songFilePath)}');
+        _notificationService.error('歌曲文件不存在：${p.basename(songFilePath)}');
         notifyListeners();
         return;
       }
@@ -3584,7 +3581,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
         return;
       }
     } catch (e) {
-      // _errorStreamController.add('加载歌词失败：${p.basename(songFilePath)}');
+      // _notificationService.error('加载歌词失败：${p.basename(songFilePath)}');
       // 未能读取到歌词时不提示错误
     }
   }
@@ -4060,7 +4057,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
           groupedLyrics.putIfAbsent(timestamp, () => []).add(cleanedText);
         }
       } catch (e) {
-        _errorStreamController.add('无法解析当前歌词');
+        _notificationService.error('无法解析当前歌词');
       }
     }
 
@@ -4179,7 +4176,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
           groupedLyrics.putIfAbsent(timestamp, () => []).add(cleanedText);
         }
       } catch (e) {
-        _errorStreamController.add('无法解析当前歌词');
+        _notificationService.error('无法解析当前歌词');
       }
     }
 
@@ -4667,7 +4664,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
         _playingPlaylist?.id == currentPlaylist.id) {
       await stop(); // 直接停止
     }
-    _infoStreamController.add('已移除歌曲：${songToRemove.title}');
+    _notificationService.info('已移除歌曲：${songToRemove.title}');
     await _loadCurrentPlaylistSongs();
 
     await _updateAllSongsList();
@@ -4695,7 +4692,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     await _savePlaylists();
 
     await _updateAllSongsList();
-    _infoStreamController.add('已移除歌曲：$songTitle');
+    _notificationService.info('已移除歌曲：$songTitle');
     await _loadCurrentPlaylistSongs();
 
     notifyListeners();
@@ -4732,7 +4729,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     } else if (_currentSongIndex > index) {
       _currentSongIndex--;
     }
-    _infoStreamController.add('已将歌曲“${songToMove.title}”置于顶部');
+    _notificationService.info('已将歌曲“${songToMove.title}”置于顶部');
 
     await _playlistManager.savePlaylists(_playlists);
 
@@ -4779,7 +4776,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
     // // 检查是否是基于文件夹的播放列表
     // if (currentPlaylist.isFolderBased) {
-    //   _infoStreamController.add('基于文件夹歌单不支持删除歌曲');
+    //   _notificationService.info('基于文件夹歌单不支持删除歌曲');
     //   return;
     // }
 
@@ -4798,7 +4795,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
       }
     }
 
-    _infoStreamController.add('已移除 ${selectedSongs.length} 首歌曲');
+    _notificationService.info('已移除 ${selectedSongs.length} 首歌曲');
 
     // 清空选中状态
     _selectedSongPaths.clear();
@@ -4834,17 +4831,17 @@ class PlaylistContentNotifier extends ChangeNotifier {
     required double targetLufs,
   }) async {
     if (_isWritingReplayGain) {
-      _infoStreamController.add('ReplayGain 标签写入任务正在进行中');
+      _notificationService.info('ReplayGain 标签写入任务正在进行中');
       return const ReplayGainWriteSummary(total: 0, success: 0, failed: 0);
     }
     if (_selectedSongPaths.isEmpty) {
-      _infoStreamController.add('未选择任何歌曲');
+      _notificationService.info('未选择任何歌曲');
       return const ReplayGainWriteSummary(total: 0, success: 0, failed: 0);
     }
 
     final selectedSongs = this.selectedSongs;
     if (selectedSongs.isEmpty) {
-      _infoStreamController.add('未选择任何歌曲');
+      _notificationService.info('未选择任何歌曲');
       return const ReplayGainWriteSummary(total: 0, success: 0, failed: 0);
     }
 
@@ -4920,7 +4917,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
       notifyListeners();
     }
 
-    _infoStreamController.add('ReplayGain 写入完成：成功 $success 首，失败 $failed 首');
+    _notificationService.info('ReplayGain 写入完成：成功 $success 首，失败 $failed 首');
 
     return ReplayGainWriteSummary(
       total: selectedSongs.length,
@@ -4985,7 +4982,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     List<String> songPaths,
   ) async {
     if (playlistIndex < 0 || playlistIndex >= _playlists.length) {
-      _errorStreamController.add('无效的歌单索引');
+      _notificationService.error('无效的歌单索引');
       return;
     }
 
@@ -4993,7 +4990,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
     // 检查是否是基于文件夹的播放列表
     if (targetPlaylist.isFolderBased) {
-      _infoStreamController.add('基于文件夹的歌单不支持手动添加歌曲');
+      _notificationService.info('基于文件夹的歌单不支持手动添加歌曲');
       return;
     }
 
@@ -5003,7 +5000,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
         .toList();
 
     if (newSongPaths.isEmpty) {
-      _infoStreamController.add('所选歌曲已存在于目标歌单中');
+      _notificationService.info('所选歌曲已存在于目标歌单中');
       return;
     }
 
@@ -5037,7 +5034,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
         ? '成功添加 ${newSongPaths.length} 首歌曲到歌单"${targetPlaylist.name}"（已排除 $excludedCount 首重复歌曲）'
         : '成功添加 ${newSongPaths.length} 首歌曲到歌单"${targetPlaylist.name}"';
 
-    _infoStreamController.add(message);
+    _notificationService.info(message);
   }
 
   // 按歌单ID添加歌曲路径（支持所有歌单类型，包括文件夹歌单）
@@ -5144,7 +5141,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
   Future<SongDetails?> getCurrentSongDetails() async {
     final targetSong = viewingSong;
     if (targetSong == null) {
-      // _errorStreamController.add('没有当前播放的歌曲');
+      // _notificationService.error('没有当前播放的歌曲');
       return null;
     }
 
@@ -5155,7 +5152,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     final file = File(normalizedPath);
 
     if (!await file.exists()) {
-      // _errorStreamController.add('歌曲文件不存在：${p.basename(filePath)}');
+      // _notificationService.error('歌曲文件不存在：${p.basename(filePath)}');
       return SongDetails(
         title: '文件不存在',
         artist: '未知',
@@ -5199,7 +5196,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
         albumArtist: metadata.albumArtist,
       );
     } catch (e) {
-      _errorStreamController.add('读取歌曲详情失败：${p.basename(filePath)}');
+      _notificationService.error('读取歌曲详情失败：${p.basename(filePath)}');
       return SongDetails(
         title: (filePath), // 至少提供文件名作为标题
         artist: '未知歌手 (解析失败)',
@@ -5643,7 +5640,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     // 更新播放列表以匹配新顺序
     _allSongsVirtualPlaylist.songFilePaths = newPathOrder;
 
-    _infoStreamController.add('已将歌曲“${songToMove.title}”置于顶部');
+    _notificationService.info('已将歌曲“${songToMove.title}”置于顶部');
 
     notifyListeners();
   }
@@ -5737,15 +5734,6 @@ class PlaylistContentNotifier extends ChangeNotifier {
     } catch (e) {
       debugPrint('搜索索引构建失败: $e');
     }
-  }
-
-  // --- 消息通知 ---
-  void postError(String errorMessage) {
-    _errorStreamController.add(errorMessage);
-  }
-
-  void postInfo(String infoMessage) {
-    _infoStreamController.add(infoMessage);
   }
 
   // 控制快捷键启用/禁用的方法
