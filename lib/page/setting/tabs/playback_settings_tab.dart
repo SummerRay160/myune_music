@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../settings_provider.dart';
 import '../../playlist/playlist_content_notifier.dart';
+import '../../../services/notification_service.dart';
 import '../audio_device_selector.dart';
 import 'info_icon.dart';
 
@@ -67,7 +68,7 @@ class PlaybackSettingsTab extends StatelessWidget {
           onChanged: (value) {
             final playlistNotifier = context.read<PlaylistContentNotifier>();
             if (value && settings.enableReplayGain) {
-              playlistNotifier.postInfo('与 "重放增益" 冲突');
+              context.read<NotificationService>().info('与 "重放增益" 冲突');
               return;
             }
             context.read<SettingsProvider>().setEnableLoudness(value);
@@ -87,7 +88,7 @@ class PlaybackSettingsTab extends StatelessWidget {
           onChanged: (value) {
             final playlistNotifier = context.read<PlaylistContentNotifier>();
             if (value && settings.enableLoudness) {
-              playlistNotifier.postInfo('与 "平衡歌曲音量" 冲突');
+              context.read<NotificationService>().info('与 "平衡歌曲音量" 冲突');
               return;
             }
             context.read<SettingsProvider>().setEnableReplayGain(value);

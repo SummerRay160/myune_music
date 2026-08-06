@@ -6,6 +6,7 @@ import '../playlist/playlist_content_widget.dart';
 import '../playlist/playlist_content_notifier.dart';
 import '../../widgets/sort_dialog.dart';
 import '../playlist/playlist_models.dart';
+import '../../services/notification_service.dart';
 
 class AllSongsPage extends StatefulWidget {
   const AllSongsPage({super.key});
@@ -26,7 +27,7 @@ class _AllSongsPageState extends State<AllSongsPage> {
   void _showSortDialog(BuildContext context) async {
     final notifier = context.read<PlaylistContentNotifier>();
     if (notifier.allSongs.isEmpty) {
-      notifier.postError('没有歌曲可以排序');
+      context.read<NotificationService>().error('没有歌曲可以排序');
       return;
     }
 
