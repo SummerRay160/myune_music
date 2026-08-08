@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:mpv_audio_kit/mpv_audio_kit.dart';
 import 'package:provider/provider.dart';
@@ -127,6 +128,8 @@ class BalanceRateControl extends StatelessWidget {
                                     ],
                                   ),
                                 ],
+                                const Divider(height: 28),
+                                ..._buildEffectSections(context, notifier),
                                 const Divider(height: 28),
                                 Text(
                                   '均衡器预设',
@@ -355,6 +358,121 @@ class BalanceRateControl extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  List<Widget> _buildEffectSections(
+    BuildContext context,
+    PlaylistContentNotifier notifier,
+  ) {
+    const sections = <(String, IconData, List<(String, String, String)>)>[
+      (
+        '空间与立体声扩张',
+        Icons.headphones,
+        [
+          ('crossfeed', '交叉混音', '将少量左、右声道信号互相混入，减轻耳机左右声道过度分离的感觉，使听感更接近自然的聆听方式'),
+          ('earwax', 'Bauer 空间模拟', '基于 Bauer 立体声扩展算法调整声道间的关系，改变耳机播放时的空间感与声场表现'),
+          ('widerStereo', '立体声扩展', '调整左右声道之间的相关性，增强立体声的宽度感，但可能使声音变得不自然'),
+          ('haas', 'Haas 空间效果', '利用左右声道之间的微小时间差制造更宽的空间感，模拟类似 Haas 效应的立体声效果'),
+          ('vocalBoost', '人声增强', '增强左右声道中的中央信号，使位于声场中央的人声等声音更加突出'),
+          ('vocalRemover', '人声削弱', '削弱左右声道中的中央信号，可降低居中的人声等内容，同时可能影响其他位于中央的乐器'),
+        ],
+      ),
+      (
+        '动态与夜间平稳',
+        Icons.dark_mode,
+        [
+          ('acompressor', '动态范围压缩', '缩小音频的动态范围，降低较大的音量变化，让较安静和较响亮的部分更加接近'),
+          ('softClip', '柔和削波', '在信号接近或超过峰值范围时进行平滑处理，减少硬削波产生的刺耳失真'),
+          ('deNoise', '背景降噪', '降低低电平的持续性背景噪声，适合处理录音中的底噪，但也可能影响较弱的声音细节'),
+        ],
+      ),
+      (
+        '音调与频响修饰',
+        Icons.equalizer,
+        [
+          ('virtualbass', '低音增强', '增强低频及相关谐波成分，使低频听起来更加明显和厚实'),
+          ('subboost', '极重低音', '提升低频范围的增益，增强低频能量\n可能造成失真或占用较多动态余量'),
+          ('crystalizer', '高频增强', '通过增强高频细节与谐波成分，使声音听起来更加明亮和清晰'),
+          ('tilt', '倾斜均衡', '按照倾斜的方式整体调整频响，使高频与低频之间形成不同的能量平衡，从而改变整体音色'),
+        ],
+      ),
+      (
+        '复古与创意音效',
+        Icons.auto_awesome,
+        [
+          ('vinyl', '黑胶/收音机', '模拟黑胶唱片/FM广播曲线'),
+          ('exciter', '谐波激励', '在高频段引入微量的二次谐波失真，使声音更具空气感'),
+          ('echo', '回声与空间延迟', '添加延迟与回声'),
+        ],
+      ),
+      (
+        '修复与人声优化',
+        Icons.auto_fix_high,
+        [
+          ('deesser', '人声齿音消除', '针对人声中的高频齿音进行动态衰减，降低 S、Sh 等音节可能产生的刺耳感'),
+          ('declip', '数字破音修复', '尝试根据削波信号的特征重建被截断的波形，减轻数字削波造成的失真'),
+          ('arnndn', '人声降噪', '使用 RNN 神经网络模型降低背景噪声\n需导入 .rnnn 文件'),
+        ],
+      ),
+    ];
+
+    return [
+      for (final (title, icon, effects) in sections) ...[
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Icon(icon, size: 16),
+            const SizedBox(width: 6),
+            Text(title, style: Theme.of(context).textTheme.titleSmall),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final (id, label, tooltip) in effects)
+              Tooltip(
+                message: tooltip,
+                child: FilterChip(
+                  label: Text(label),
+                  selected: notifier.isEffectEnabled(id),
+                  onSelected: (enabled) async {
+                    if (id == 'arnndn' && enabled) {
+                      bool needsPicker = false;
+                      if (notifier.arnndnModelPath == null) {
+                        needsPicker = true;
+                      } else if (!File(
+                        notifier.arnndnModelPath!,
+                      ).existsSync()) {
+                        notifier.showNotification('RNN降噪模型文件已失效或被移动，请重新选择');
+                        await notifier.setArnndnModelPath(null);
+                        needsPicker = true;
+                      }
+
+                      if (needsPicker) {
+                        final result = await FilePicker.platform.pickFiles(
+                          type: FileType.custom,
+                          allowedExtensions: ['rnnn'],
+                          dialogTitle: '选择 RNN 降噪模型文件',
+                        );
+                        if (result == null ||
+                            result.files.single.path == null) {
+                          return;
+                        }
+                        await notifier.setArnndnModelPath(
+                          result.files.single.path!,
+                        );
+                      }
+                    }
+                    await notifier.toggleEffect(id, enabled);
+                  },
+                ),
+              ),
+          ],
+        ),
+      ],
+    ];
   }
 
   String _formatFrequency(int frequency) {

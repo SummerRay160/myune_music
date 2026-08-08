@@ -182,6 +182,15 @@ class PlaylistContentNotifier extends ChangeNotifier {
   static const _playbackRateKey = 'player_playback_rate';
   static const _equalizerGainsKey = 'player_equalizer_gains';
   static const _equalizerPresetKey = 'player_equalizer_preset';
+  static const _enabledEffectsKey = 'player_enabled_effects';
+  static const _arnndnModelPathKey = 'player_arnndn_model_path';
+
+  // --- 音效开关 ---
+  final Set<String> _enabledEffects = {};
+  String? _arnndnModelPath;
+
+  bool isEffectEnabled(String id) => _enabledEffects.contains(id);
+  String? get arnndnModelPath => _arnndnModelPath;
 
   double get currentPitch => _currentPitch;
   double get currentPlaybackRate => _currentPlaybackRate;
@@ -583,6 +592,22 @@ class PlaylistContentNotifier extends ChangeNotifier {
     await _audioService.player.setPitch(_currentPitch);
     await _audioService.player.setRate(_currentPlaybackRate);
     await _applyEqualizer();
+
+    // 加载音效开关状态
+    final effectsJson = prefs.getString(_enabledEffectsKey);
+    if (effectsJson != null) {
+      try {
+        final decoded = jsonDecode(effectsJson);
+        if (decoded is List) {
+          _enabledEffects.addAll(decoded.cast<String>());
+        }
+      } catch (_) {}
+    }
+    _arnndnModelPath = prefs.getString(_arnndnModelPathKey);
+    // 恢复所有已启用的音效
+    for (final id in _enabledEffects.toList()) {
+      await _applyEffect(id, true);
+    }
   }
 
   Future<void> _saveAudioControlSettings() async {
@@ -591,6 +616,15 @@ class PlaylistContentNotifier extends ChangeNotifier {
     await prefs.setDouble(_playbackRateKey, _currentPlaybackRate);
     await prefs.setString(_equalizerPresetKey, _equalizerPresetName);
     await prefs.setString(_equalizerGainsKey, jsonEncode(_equalizerGains));
+    await prefs.setString(
+      _enabledEffectsKey,
+      jsonEncode(_enabledEffects.toList()),
+    );
+    if (_arnndnModelPath != null) {
+      await prefs.setString(_arnndnModelPathKey, _arnndnModelPath!);
+    } else {
+      await prefs.remove(_arnndnModelPathKey);
+    }
   }
 
   void _scheduleAudioControlSave() {
@@ -2198,8 +2232,193 @@ class PlaylistContentNotifier extends ChangeNotifier {
     await _audioService.player.setPitch(_currentPitch);
     await _audioService.player.setRate(_currentPlaybackRate);
     await _applyEqualizer();
+    // 重置所有音效
+    for (final id in _enabledEffects.toList()) {
+      await _applyEffect(id, false);
+    }
+    _enabledEffects.clear();
     await _saveAudioControlSettings();
     notifyListeners();
+  }
+
+  // --- 音效开关管理 ---
+
+  Future<void> toggleEffect(String id, bool enabled) async {
+    if (enabled) {
+      if (id == 'vocalBoost' && _enabledEffects.contains('vocalRemover')) {
+        _enabledEffects.remove('vocalRemover');
+        await _applyEffect('vocalRemover', false);
+      } else if (id == 'vocalRemover' &&
+          _enabledEffects.contains('vocalBoost')) {
+        _enabledEffects.remove('vocalBoost');
+        await _applyEffect('vocalBoost', false);
+      }
+      _enabledEffects.add(id);
+    } else {
+      _enabledEffects.remove(id);
+    }
+    await _applyEffect(id, enabled);
+    await _saveAudioControlSettings();
+    notifyListeners();
+  }
+
+  Future<void> setArnndnModelPath(String? path) async {
+    _arnndnModelPath = path;
+    await _saveAudioControlSettings();
+  }
+
+  void showNotification(String message) {
+    _notificationService.info(message);
+  }
+
+  Future<void> _applyEffect(String id, bool enabled) async {
+    final player = _audioService.player;
+    try {
+      switch (id) {
+        case 'crossfeed':
+          await player.updateAudioEffects(
+            (e) => e.updateCrossfeed(
+              (m) => m.copyWith(enabled: enabled, strength: 0.4, range: 0.5),
+            ),
+          );
+        case 'earwax':
+          await player.updateAudioEffects(
+            (e) => e.updateCrossfeed(
+              (m) => m.copyWith(enabled: enabled, strength: 0.3),
+            ),
+          );
+        case 'widerStereo':
+          await player.updateAudioEffects((e) {
+            var r = e.updateExtrastereo(
+              (m) => m.copyWith(enabled: enabled, m: 1.2),
+            );
+            r = r.updateStereowiden(
+              (m) => m.copyWith(enabled: enabled, delay: 15, drymix: 0.8),
+            );
+            return r;
+          });
+        case 'haas':
+          await player.updateAudioEffects(
+            (e) => e.updateHaas(
+              (m) => m.copyWith(
+                enabled: enabled,
+                level_in: 0.8,
+                level_out: 0.8,
+                side_gain: 0.35,
+                middle_source: HaasSource.mid,
+              ),
+            ),
+          );
+        case 'vocalBoost':
+          await player.updateAudioEffects(
+            (e) => e.updateStereotools(
+              (m) => m.copyWith(enabled: enabled, mlev: 1.4, slev: 0.8),
+            ),
+          );
+        case 'vocalRemover':
+          await player.updateAudioEffects(
+            (e) => e.updateStereotools(
+              (m) => m.copyWith(enabled: enabled, mlev: 0.15, slev: 1.1),
+            ),
+          );
+        case 'acompressor':
+          await player.updateAudioEffects(
+            (e) => e.updateAcompressor((m) => m.copyWith(enabled: enabled)),
+          );
+        case 'softClip':
+          await player.updateAudioEffects((e) {
+            var r = e.updateAlimiter(
+              (m) => m.copyWith(enabled: enabled, limit: 0.95),
+            );
+            r = r.updateAsoftclip((m) => m.copyWith(enabled: enabled));
+            return r;
+          });
+        case 'deNoise':
+          await player.updateAudioEffects((e) {
+            var r = e.updateAgate(
+              (m) => m.copyWith(enabled: enabled, threshold: 0.04),
+            );
+            r = r.updateAfftdn((m) => m.copyWith(enabled: enabled));
+            return r;
+          });
+        case 'virtualbass':
+          await player.updateAudioEffects(
+            (e) => e.updateVirtualbass((m) => m.copyWith(enabled: enabled)),
+          );
+        case 'subboost':
+          await player.updateAudioEffects((e) {
+            var r = e.updateAsubboost(
+              (m) => m.copyWith(enabled: enabled, dry: 0.7, wet: 0.5),
+            );
+            r = r.updateBass((m) => m.copyWith(enabled: enabled, g: 3));
+            return r;
+          });
+        case 'crystalizer':
+          await player.updateAudioEffects((e) {
+            var r = e.updateCrystalizer((m) => m.copyWith(enabled: enabled));
+            r = r.updateTreble((m) => m.copyWith(enabled: enabled, g: 2));
+            return r;
+          });
+        case 'tilt':
+          await player.updateAudioEffects((e) {
+            var r = e.updateAtilt((m) => m.copyWith(enabled: enabled));
+            r = r.updateTiltshelf((m) => m.copyWith(enabled: enabled));
+            return r;
+          });
+        case 'vinyl':
+          await player.updateAudioEffects((e) {
+            var r = e.updateAemphasis((m) => m.copyWith(enabled: false));
+            r = r.updateAcrusher((m) => m.copyWith(enabled: false));
+            r = r.updateAtilt((m) => m.copyWith(enabled: false));
+
+            r = r.updateHighpass(
+              (m) => m.copyWith(enabled: enabled, frequency: 150),
+            );
+            r = r.updateLowpass(
+              (m) => m.copyWith(enabled: enabled, frequency: 7500),
+            );
+
+            return r;
+          });
+        case 'exciter':
+          await player.updateAudioEffects(
+            (e) => e.updateAexciter((m) => m.copyWith(enabled: enabled)),
+          );
+        case 'echo':
+          await player.updateAudioEffects(
+            (e) => e.updateAecho(
+              (m) => m.copyWith(
+                enabled: enabled,
+                in_gain: 0.8,
+                out_gain: 0.5,
+                delays: '80|160',
+                decays: '0.35|0.15',
+              ),
+            ),
+          );
+        case 'deesser':
+          await player.updateAudioEffects(
+            (e) => e.updateDeesser((m) => m.copyWith(enabled: enabled)),
+          );
+        case 'declip':
+          await player.updateAudioEffects(
+            (e) => e.updateAdeclip((m) => m.copyWith(enabled: enabled)),
+          );
+        case 'arnndn':
+          if (_arnndnModelPath != null) {
+            await player.updateAudioEffects(
+              (e) => e.copyWith(
+                arnndn: ArnndnSettings(
+                  enabled: enabled,
+                  model: _arnndnModelPath!,
+                ),
+              ),
+            );
+          }
+      }
+    } catch (e) {
+      //
+    }
   }
 
   // 用于无缝播放模式下，将下一首预加载到 mpv playlist 中
