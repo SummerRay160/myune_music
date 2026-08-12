@@ -213,7 +213,7 @@ class AudioService {
     required List<int> frequencies,
   }) async {
     if (_isEqualizerFlat(gains)) {
-      await _player.setAudioEffects(const AudioEffects());
+      await _player.updateAudioEffects((e) => e.copyWith(custom: []));
       return;
     }
 
