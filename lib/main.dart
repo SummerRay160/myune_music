@@ -65,6 +65,10 @@ void main() async {
 
   final Menu menu = Menu(
     items: [
+      MenuItem(key: 'prev_song', label: '上一首'),
+      MenuItem(key: 'play_pause', label: '播放/暂停'),
+      MenuItem(key: 'next_song', label: '下一首'),
+      MenuItem.separator(),
       MenuItem(key: 'show_window', label: '显示窗口'),
       MenuItem.separator(),
       MenuItem(key: 'exit_app', label: '退出'),
@@ -404,6 +408,14 @@ class _MyAppState extends State<MyApp> with TrayListener {
       // exit是为了确保即使有后台任务，进程也能立即结束
       // 如果close已经让进程自毁了，这一行就不会执行
       exit(0);
+    } else if (menuItem.key == 'prev_song') {
+      _playlistNotifier.playPrevious();
+    } else if (menuItem.key == 'play_pause') {
+      _playlistNotifier.isPlaying
+          ? _playlistNotifier.pause()
+          : _playlistNotifier.play();
+    } else if (menuItem.key == 'next_song') {
+      _playlistNotifier.playNext();
     }
   }
 
