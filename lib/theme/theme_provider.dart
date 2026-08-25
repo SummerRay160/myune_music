@@ -116,11 +116,7 @@ class ThemeProvider with ChangeNotifier {
   }
 
   Future<void> restoreLastManualColor() async {
-    final prefs = await SharedPreferences.getInstance();
-    final int? savedColorValue = prefs.getInt(_lastManualSeedColorKey);
-    final color = savedColorValue != null
-        ? Color(savedColorValue)
-        : Color(_defaultSeedColorValue);
+    final color = _lastManualSeedColor;
     if (_currentSeedColor != color) {
       _currentSeedColor = color;
       notifyListeners();

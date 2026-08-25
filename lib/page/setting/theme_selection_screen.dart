@@ -19,13 +19,9 @@ class ThemeSelectionScreen extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Text(
-                    '更改主题配色',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ],
+              Text(
+                '更改主题配色',
+                style: Theme.of(context).textTheme.titleMedium,
               ),
               ElevatedButton.icon(
                 onPressed: () =>
