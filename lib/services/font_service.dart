@@ -80,7 +80,8 @@ class FontService {
   static const _cacheVersionKey = 'font_meta_cache_version';
 
   /// 当前缓存版本号，用于缓存失效管理
-  static const _cacheVersion = 3;
+  /// v4: displayName 新增字重后缀(如"微软雅黑 (Bold)")
+  static const _cacheVersion = 4;
 
   /// 系统字体库实例，用于访问系统字体
   final SystemFonts _systemFonts = SystemFonts();
@@ -97,10 +98,13 @@ class FontService {
   /// 返回只读的所有已扫描字体映射表
   Map<String, FontMeta> get fonts => Map.unmodifiable(_fonts);
 
+  /// 默认字体的运行时标识。
+  static const String _defaultFontKey = 'Misans';
+
   /// 默认字体的元数据，包含MiSans字体的信息
   late final FontMeta defaultFontMeta = FontMeta(
-    fileName: 'Misans',
-    fontFamily: 'Misans',
+    fileName: _defaultFontKey,
+    fontFamily: _defaultFontKey,
     displayName: 'MiSans (默认字体)',
     filePath: '',
     isLoaded: true,
@@ -131,18 +135,10 @@ class FontService {
 
   /// 根据字体名解析显示名称
   ///
-  /// 优先从已扫描的字体映射表中查找，
-  /// 如果找不到则尝试从字体名称映射表中查找，
-  /// 最终返回原始字体名
+  /// 先从已扫描的字体映射表中查找，找不到则返回原始字体名
   String resolveDisplayName(String systemFontName) {
     final meta = _fonts[systemFontName];
-    if (meta != null) return meta.displayName;
-
-    final lowerName = systemFontName.toLowerCase();
-    final mappedName = _fontNameMap[lowerName];
-    if (mappedName != null) return mappedName;
-
-    return systemFontName;
+    return meta?.displayName ?? systemFontName;
   }
 
   /// 扫描系统字体并返回字体元数据列表
@@ -259,7 +255,7 @@ class FontService {
                 _fonts[uniqueKey] = FontMeta(
                   fileName: uniqueKey,
                   fontFamily: familyName,
-                  displayName: _buildDisplayName(familyName, familyName),
+                  displayName: _buildDisplayName(uniqueKey, familyName),
                   filePath: filePath,
                 );
               }
@@ -289,7 +285,7 @@ class FontService {
   ///
   /// [meta] 要加载的字体元数据
   Future<void> loadFont(FontMeta meta) async {
-    if (meta.fileName == 'Misans' || meta.isLoaded) return;
+    if (meta.fileName == _defaultFontKey || meta.isLoaded) return;
 
     if (meta.filePath.endsWith('.ttc')) {
       try {
@@ -306,10 +302,8 @@ class FontService {
         }
 
         final bytes = await file.readAsBytes();
-        final familyName = meta.fontFamily.isNotEmpty
-            ? meta.fontFamily
-            : meta.fileName;
-        final loader = FontLoader(familyName)
+        // 用 meta.fileName(对 TTC 子字体即 uniqueKey) 注册 FontLoader，加载 TTC 字体
+        final loader = FontLoader(meta.fileName)
           ..addFont(
             Future.value(
               ByteData.view(
@@ -465,15 +459,11 @@ class FontService {
   /// 构建字体的显示名称
   ///
   /// 优先使用字体家族名称，如果与文件名不同则组合显示；
-  /// 如果无法获取家族名称，则尝试从名称映射表中查找中文名；
-  /// 最终回退到使用文件名
+  /// 无法获取家族名称时回退到文件名
   String _buildDisplayName(String fileName, String familyName) {
     if (familyName.isNotEmpty && familyName != fileName) {
       return '$familyName / $fileName';
     }
-    final lowerName = fileName.toLowerCase();
-    final mapped = _fontNameMap[lowerName];
-    if (mapped != null) return mapped;
     return fileName;
   }
 
@@ -519,6 +509,29 @@ class FontService {
     }
   }
 
+  /// 在 [recordsOffset] 处读取 [numTables] 个目录表记录。
+  /// TTF 与 TTC 子字体都通过此方法定位 name 表。
+  Future<({int offset, int length})?> _findNameTable(
+    RandomAccessFile raf,
+    int recordsOffset,
+    int numTables,
+  ) async {
+    if (numTables == 0 || numTables > 100) return null;
+    final records = await _readBytes(raf, recordsOffset, numTables * 16);
+    final data = ByteData.view(records.buffer);
+    for (int i = 0; i < numTables; i++) {
+      final base = i * 16;
+      final tag = String.fromCharCodes(records.sublist(base, base + 4));
+      if (tag == 'name') {
+        return (
+          offset: data.getUint32(base + 8, Endian.big),
+          length: data.getUint32(base + 12, Endian.big),
+        );
+      }
+    }
+    return null;
+  }
+
   /// 解析单个TTF字体的家族名称
   ///
   /// 读取字体文件的name表，遍历所有name记录，
@@ -529,28 +542,9 @@ class FontService {
     ByteData headerData,
   ) async {
     final numTables = headerData.getUint16(4, Endian.big);
-    if (numTables == 0 || numTables > 100) return '';
-
-    final tableRecordsSize = numTables * 16;
-    final tableRecords = await _readBytes(raf, 12, tableRecordsSize);
-    final tableRecordsData = ByteData.view(tableRecords.buffer);
-
-    int? nameOffset;
-    int? nameLength;
-    for (int i = 0; i < numTables; i++) {
-      final recordBase = i * 16;
-      final tag = String.fromCharCodes(
-        tableRecords.sublist(recordBase, recordBase + 4),
-      );
-      if (tag == 'name') {
-        nameOffset = tableRecordsData.getUint32(recordBase + 8, Endian.big);
-        nameLength = tableRecordsData.getUint32(recordBase + 12, Endian.big);
-        break;
-      }
-    }
-    if (nameOffset == null || nameLength == null) return '';
-
-    final nameTable = await _readBytes(raf, nameOffset, nameLength);
+    final info = await _findNameTable(raf, 12, numTables);
+    if (info == null) return '';
+    final nameTable = await _readBytes(raf, info.offset, info.length);
     return _parseNameTable(nameTable);
   }
 
@@ -572,37 +566,14 @@ class FontService {
     final names = <String>[];
     for (int fontIndex = 0; fontIndex < numFonts; fontIndex++) {
       final fontOffset = offsetData.getUint32(fontIndex * 4, Endian.big);
-
       final fontHeader = await _readBytes(raf, fontOffset, 12);
       final fontHeaderData = ByteData.view(fontHeader.buffer);
-
       final numTables = fontHeaderData.getUint16(4, Endian.big);
-      if (numTables == 0 || numTables > 100) continue;
 
-      final tableRecordsSize = numTables * 16;
-      final tableRecords = await _readBytes(
-        raf,
-        fontOffset + 12,
-        tableRecordsSize,
-      );
-      final tableRecordsData = ByteData.view(tableRecords.buffer);
+      final info = await _findNameTable(raf, fontOffset + 12, numTables);
+      if (info == null) continue;
 
-      int? nameOffset;
-      int? nameLength;
-      for (int i = 0; i < numTables; i++) {
-        final recordBase = i * 16;
-        final tag = String.fromCharCodes(
-          tableRecords.sublist(recordBase, recordBase + 4),
-        );
-        if (tag == 'name') {
-          nameOffset = tableRecordsData.getUint32(recordBase + 8, Endian.big);
-          nameLength = tableRecordsData.getUint32(recordBase + 12, Endian.big);
-          break;
-        }
-      }
-      if (nameOffset == null || nameLength == null) continue;
-
-      final nameTable = await _readBytes(raf, nameOffset, nameLength);
+      final nameTable = await _readBytes(raf, info.offset, info.length);
       final name = _parseNameTable(nameTable);
       if (name.isNotEmpty && !names.contains(name)) {
         names.add(name);
@@ -642,10 +613,9 @@ class FontService {
 
   /// 解析字体name表获取字体名称
   ///
-  /// name表包含多个名称记录，遍历查找：
-  /// 1. 优先返回Windows平台的中文名称（platformId=3, languageId=2052）
-  /// 2. 其次返回Windows平台的英文名称（platformId=3, languageId=1033）
-  /// 3. 最后返回Mac平台的英文名称（platformId=1）
+  /// 遍历name记录：
+  /// - 字体家族名(nameId=1)-字重(nameId=2)：用于区分常规/粗体/细体等
+  /// 最终返回 "家族名 (字重)"
   String _parseNameTable(Uint8List nameTable) {
     if (nameTable.length < 6) return '';
     final data = ByteData.view(
@@ -657,8 +627,9 @@ class FontService {
     final count = data.getUint16(2, Endian.big);
     final stringOffset = data.getUint16(4, Endian.big);
 
-    String chineseName = '';
-    String englishName = '';
+    String chineseFamily = '';
+    String englishFamily = '';
+    String subfamily = ''; // nameId=2
 
     for (int i = 0; i < count; i++) {
       final recordOffset = 6 + i * 12;
@@ -670,26 +641,42 @@ class FontService {
       final length = data.getUint16(recordOffset + 8, Endian.big);
       final offset = data.getUint16(recordOffset + 10, Endian.big);
 
-      if (nameId != 1) continue;
-
       final strStart = stringOffset + offset;
       final strEnd = strStart + length;
       if (strEnd > nameTable.length) continue;
 
       final strBytes = Uint8List.sublistView(nameTable, strStart, strEnd);
+      final isWinChinese = platformId == 3 && languageId == 2052;
+      final isWinEnglish = platformId == 3 && languageId == 1033;
+      final isMac = platformId == 1;
+      String decode() => isWinChinese || isWinEnglish
+          ? _decodeUtf16BE(strBytes)
+          : (isMac ? _decodeMacRoman(strBytes) : '');
 
-      if (platformId == 3 && languageId == 2052) {
-        chineseName = _decodeUtf16BE(strBytes);
-      }
-      if (platformId == 3 && languageId == 1033 && englishName.isEmpty) {
-        englishName = _decodeUtf16BE(strBytes);
-      }
-      if (platformId == 1 && englishName.isEmpty) {
-        englishName = _decodeMacRoman(strBytes);
+      if (nameId == 1) {
+        if (isWinChinese) chineseFamily = _decodeUtf16BE(strBytes);
+        if (isWinEnglish && englishFamily.isEmpty) englishFamily = _decodeUtf16BE(strBytes);
+        if (isMac && englishFamily.isEmpty) englishFamily = _decodeMacRoman(strBytes);
+      } else if (nameId == 2) {
+        if (subfamily.isEmpty) {
+          final v = decode();
+          if (v.isNotEmpty) subfamily = v;
+        }
       }
     }
 
-    return chineseName.isNotEmpty ? chineseName : englishName;
+    final family = chineseFamily.isNotEmpty ? chineseFamily : englishFamily;
+    final weight = subfamily;
+    final w = weight.toLowerCase();
+    // family 名已含字重(如"等线 Light")时不重复附加，避免"等线 Light (Light)"
+    if (weight.isEmpty ||
+        w == 'regular' ||
+        w == 'normal' ||
+        w == '常规' ||
+        family.toLowerCase().contains(w)) {
+      return family;
+    }
+    return '$family ($weight)';
   }
 
   /// 将UTF-16大端编码的字节流解码为字符串
@@ -718,129 +705,4 @@ class FontService {
     return buffer.toString().trim();
   }
 
-  /// 字体文件名到显示名称的映射表
-  ///
-  /// 存储常见字体的友好中文名称，
-  /// 包含系统字体、中文字体和常见英文字体
-  static const Map<String, String> _fontNameMap = {
-    'msyh': '微软雅黑',
-    'msyhbd': '微软雅黑 Bold',
-    'msyhl': '微软雅黑 Light',
-    'simsun': '宋体',
-    'simsunb': '宋体 Bold',
-    'nsimsun': '新宋体',
-    'simhei': '黑体',
-    'simkai': '楷体',
-    'simfang': '仿宋',
-    'fzlthk--gbk1-0': '方正兰亭黑',
-    'fzxs': '方正行书',
-    'sourcehansanssc': '思源黑体',
-    'sourcehanserifsc': '思源宋体',
-    'notosanssc': 'Noto 无衬线 SC',
-    'notoserifsc': 'Noto 衬线 SC',
-    'notosansmonocjksc': 'Noto 等宽 CJK SC',
-    'dengxian': '等线',
-    'dengxian-bold': '等线 Bold',
-    'dengxian-light': '等线 Light',
-    'dengxian-regular': '等线 Regular',
-    'stsong': '华文宋体',
-    'stkaiti': '华文楷体',
-    'stheiti': '华文黑体',
-    'stfangsong': '华文仿宋',
-    'stxihei': '华文细黑',
-    'stzhongsong': '华文中宋',
-    'stbaiti': '华文隶书',
-    'sthupo': '华文琥珀',
-    'stcaiyun': '华文彩云',
-    'stxingkai': '华文行楷',
-    'stxinwei': '华文新魏',
-    'fzytk': '方正姚体',
-    'fzstk': '方正舒体',
-    'fzyt': '方正姚体',
-    'fzyous': '方正悠宋',
-    'fzsek': '方正少儿',
-    'fzktk': '方正楷体',
-    'fzfsk': '方正仿宋',
-    'fzcq': '方正粗倩',
-    'arial': 'Arial',
-    'arialbd': 'Arial Bold',
-    'ariali': 'Arial Italic',
-    'arialbi': 'Arial Bold Italic',
-    'times': 'Times New Roman',
-    'timesbd': 'Times New Roman Bold',
-    'timesi': 'Times New Roman Italic',
-    'timesbi': 'Times New Roman Bold Italic',
-    'cour': 'Courier New',
-    'courbd': 'Courier New Bold',
-    'couri': 'Courier New Italic',
-    'courbi': 'Courier New Bold Italic',
-    'courer': 'Courier New',
-    'consola': 'Consolas',
-    'consolab': 'Consolas Bold',
-    'consolai': 'Consolas Italic',
-    'consolaz': 'Consolas Bold Italic',
-    'calibri': 'Calibri',
-    'calibrib': 'Calibri Bold',
-    'calibrii': 'Calibri Italic',
-    'calibriz': 'Calibri Bold Italic',
-    'cambria': 'Cambria',
-    'cambriab': 'Cambria Bold',
-    'cambriai': 'Cambria Italic',
-    'cambriaz': 'Cambria Bold Italic',
-    'comic': 'Comic Sans MS',
-    'comicbd': 'Comic Sans MS Bold',
-    'comici': 'Comic Sans MS Italic',
-    'comicz': 'Comic Sans MS Bold Italic',
-    'georgia': 'Georgia',
-    'georgiab': 'Georgia Bold',
-    'georgiai': 'Georgia Italic',
-    'georgiaz': 'Georgia Bold Italic',
-    'impact': 'Impact',
-    'verdana': 'Verdana',
-    'verdanab': 'Verdana Bold',
-    'verdanai': 'Verdana Italic',
-    'verdanaz': 'Verdana Bold Italic',
-    'tahoma': 'Tahoma',
-    'tahomabd': 'Tahoma Bold',
-    'tahomai': 'Tahoma Italic',
-    'tahomabdi': 'Tahoma Bold Italic',
-    'segoeui': 'Segoe UI',
-    'segoeuib': 'Segoe UI Bold',
-    'segoeuii': 'Segoe UI Italic',
-    'segoeuiz': 'Segoe UI Bold Italic',
-    'segoeuil': 'Segoe UI Light',
-    'seguisb': 'Segoe UI Semibold',
-    'segoeuisl': 'Segoe UI Semilight',
-    'seguiemj': 'Segoe UI Emoji',
-    'seguihis': 'Segoe UI Historic',
-    'seguisym': 'Segoe UI Symbol',
-    'segoepr': 'Segoe Print',
-    'segoeprb': 'Segoe Print Bold',
-    'segoesc': 'Segoe Script',
-    'segoescb': 'Segoe Script Bold',
-    'malgun': 'Malgun Gothic',
-    'malgunbd': 'Malgun Gothic Bold',
-    'malguni': 'Malgun Gothic Italic',
-    'malgunsl': 'Malgun Gothic Semilight',
-    'gulim': '굴림',
-    'gulimche': '굴림체',
-    'batang': '바탕',
-    'batangche': '바탕체',
-    'dotum': '돋움',
-    'dotumche': '돋움체',
-    'msgothic': 'MS Gothic',
-    'msmincho': 'MS Mincho',
-    'yu gothic': 'Yu Gothic',
-    'yugothic': 'Yu Gothic',
-    'meiryo': 'Meiryo',
-    'meiryob': 'Meiryo Bold',
-    'meiryoui': 'Meiryo Italic',
-    'hgrge': 'HGP ゴシック E',
-    'hgrme': 'HGP 明朝 E',
-    'hgmarugothicmpro': 'HGP 丸ゴシック M',
-    'yugothb': 'Yu Gothic Bold',
-    'yugothr': 'Yu Gothic Regular',
-    'yugothm': 'Yu Gothic Medium',
-    'yugothl': 'Yu Gothic Light',
-  };
 }
