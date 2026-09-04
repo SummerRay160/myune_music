@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'lyrics_handler.dart';
 import 'dart:typed_data';
 import 'dart:math';
@@ -1553,7 +1553,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     }
   }
 
-  bool addPlaylist(String name, {List<String>? folderPaths}) {
+  Future<bool> addPlaylist(String name, {List<String>? folderPaths}) async {
     final trimmedName = name.trim();
 
     if (trimmedName.isEmpty) {
@@ -1577,15 +1577,17 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
     _playlists.add(playlist);
     _selectedIndex = _playlists.length - 1;
+    notifyListeners();
 
-    // 如果是基于文件夹的播放列表，则扫描文件夹中的歌曲
+    // 如果是基于文件夹的播放列表，先完成扫描再执行后续操作
+    // 避免 _scanFoldersAndAddSongs 与 _loadCurrentPlaylistSongs 并发竞争
     if (folderPaths != null && folderPaths.isNotEmpty) {
-      _scanFoldersAndAddSongs(folderPaths);
+      await _scanFoldersAndAddSongs(folderPaths);
     }
 
-    _savePlaylists();
-    _loadCurrentPlaylistSongs(); // 加载当前播放列表歌曲
-    _updateAllSongsList(); // 更新所有歌曲列表
+    await _savePlaylists();
+    await _loadCurrentPlaylistSongs(); // 扫描完成后再加载歌曲
+    await _updateAllSongsList();
     _notificationService.info('已成功创建歌单 $trimmedName');
 
     notifyListeners();
@@ -1815,17 +1817,17 @@ class PlaylistContentNotifier extends ChangeNotifier {
   }
 
   // 更新播放列表的文件夹路径
-  void updatePlaylistFolders(int index, List<String> folderPaths) {
+  Future<void> updatePlaylistFolders(int index, List<String> folderPaths) async {
     if (index < 0 || index >= _playlists.length) return;
 
     final playlist = _playlists[index];
     if (!playlist.isFolderBased) return;
 
     playlist.folderPaths = List<String>.from(folderPaths);
-    _savePlaylists();
+    await _savePlaylists();
 
     // 重新扫描文件夹内容
-    _scanFoldersAndAddSongs(playlist.folderPaths);
+    await _scanFoldersAndAddSongs(playlist.folderPaths);
 
     _notificationService.info('已更新 ${playlist.name}');
     notifyListeners();
@@ -1966,7 +1968,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
       return false;
     }
 
-    if (addPlaylist(trimmedName)) {
+    if (await addPlaylist(trimmedName)) {
       final newPlaylist = _playlists[_playlists.length - 1];
 
       // 添加歌曲路径和歌曲对象到新歌单
