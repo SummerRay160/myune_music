@@ -455,11 +455,41 @@ class _AddPlaylistDialogState extends State<_AddPlaylistDialog> {
   final TextEditingController _controller = TextEditingController();
   final List<String> _selectedFolders = [];
   ManagementMode _selectedMode = ManagementMode.manual;
+  bool _isCreating = false;
 
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _handleCreate() async {
+    if (_isCreating) return;
+
+    if (_selectedMode == ManagementMode.folder && _selectedFolders.isEmpty) {
+      context.read<NotificationService>().info('请选择至少一个文件夹');
+      return;
+    }
+
+    setState(() => _isCreating = true);
+
+    final bool success;
+    if (_selectedMode == ManagementMode.folder) {
+      success = await widget.notifier.addPlaylist(
+        _controller.text,
+        folderPaths: _selectedFolders,
+      );
+    } else {
+      success = await widget.notifier.addPlaylist(_controller.text);
+    }
+
+    if (!mounted) return;
+
+    if (success) {
+      Navigator.of(context).pop();
+    } else {
+      setState(() => _isCreating = false);
+    }
   }
 
   @override
@@ -479,6 +509,7 @@ class _AddPlaylistDialogState extends State<_AddPlaylistDialog> {
                 controller: _controller,
                 decoration: const InputDecoration(hintText: '输入歌单名称'),
                 autofocus: true,
+                enabled: !_isCreating,
               ),
             ),
             const SizedBox(height: 16),
@@ -486,10 +517,11 @@ class _AddPlaylistDialogState extends State<_AddPlaylistDialog> {
             RadioGroup<ManagementMode>(
               groupValue: _selectedMode,
               onChanged: (value) {
-                setState(() {
-                  _selectedMode = value!;
-                });
-              },
+                  if (_isCreating || value == null) return;
+                  setState(() {
+                    _selectedMode = value;
+                  });
+                },
               child: const Column(
                 children: [
                   RadioListTile<ManagementMode>(
@@ -512,35 +544,31 @@ class _AddPlaylistDialogState extends State<_AddPlaylistDialog> {
                 onFoldersChanged: () => setState(() {}),
               ),
             ],
+            if (_isCreating) ...[
+              const SizedBox(height: 16),
+              const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 8),
+                  Text('正在创建歌单...'),
+                ],
+              ),
+            ],
           ],
         ),
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _isCreating ? null : () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
         ElevatedButton(
-          onPressed: () {
-            if (_selectedMode == ManagementMode.folder &&
-                _selectedFolders.isEmpty) {
-              context.read<NotificationService>().info('请选择至少一个文件夹');
-              return;
-            }
-
-            if (_selectedMode == ManagementMode.folder) {
-              if (widget.notifier.addPlaylist(
-                _controller.text,
-                folderPaths: _selectedFolders,
-              )) {
-                Navigator.of(context).pop();
-              }
-            } else {
-              if (widget.notifier.addPlaylist(_controller.text)) {
-                Navigator.of(context).pop();
-              }
-            }
-          },
+          onPressed: _isCreating ? null : _handleCreate,
           child: const Text('添加'),
         ),
       ],
