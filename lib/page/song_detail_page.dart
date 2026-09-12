@@ -325,9 +325,71 @@ class _ColorListTween extends Tween<List<Color>> {
     final beginColors = begin!;
     final endColors = end!;
     return List.generate(beginColors.length, (i) {
-      return Color.lerp(beginColors[i], endColors[i], t)!;
+      return _lerpColorOklab(beginColors[i], endColors[i], t);
     });
   }
+}
+
+// OKLab 空间插值。
+// 不用 HSL 插值的原因：色相沿最短路径插值，暖色(≈50°)切冷色(≈230°)时
+// 会扫过 90°~150° 的绿色区；且近灰白封面的取色色相本就是随机噪声，
+// 过渡时更容易闪过突兀的绿色。OKLab 中暖冷互混走中性色，过渡更柔和。
+Color _lerpColorOklab(Color a, Color b, double t) {
+  final List<double> la = _colorToOklab(a);
+  final List<double> lb = _colorToOklab(b);
+  return _oklabToColor([
+    la[0] + (lb[0] - la[0]) * t,
+    la[1] + (lb[1] - la[1]) * t,
+    la[2] + (lb[2] - la[2]) * t,
+  ]);
+}
+
+List<double> _colorToOklab(Color c) {
+  double srgbToLinear(double v) =>
+      v <= 0.04045 ? v / 12.92 : math.pow((v + 0.055) / 1.055, 2.4).toDouble();
+
+  final double r = srgbToLinear(c.r);
+  final double g = srgbToLinear(c.g);
+  final double b = srgbToLinear(c.b);
+
+  final double l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
+  final double m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;
+  final double s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
+
+  final double l_ = math.pow(l, 1 / 3).toDouble();
+  final double m_ = math.pow(m, 1 / 3).toDouble();
+  final double s_ = math.pow(s, 1 / 3).toDouble();
+
+  return <double>[
+    0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+    1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+    0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+  ];
+}
+
+Color _oklabToColor(List<double> lab) {
+  double linearToSrgb(double v) => v <= 0.0031308
+      ? v * 12.92
+      : 1.055 * math.pow(v, 1 / 2.4).toDouble() - 0.055;
+
+  final double l_ = lab[0] + 0.3963377774 * lab[1] + 0.2158037573 * lab[2];
+  final double m_ = lab[0] - 0.1055613458 * lab[1] - 0.0638541728 * lab[2];
+  final double s_ = lab[0] - 0.0894841775 * lab[1] - 1.2914855480 * lab[2];
+
+  final double l = l_ * l_ * l_;
+  final double m = m_ * m_ * m_;
+  final double s = s_ * s_ * s_;
+
+  final double r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+  final double g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+  final double b = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+
+  return Color.fromARGB(
+    255,
+    (linearToSrgb(r.clamp(0.0, 1.0)) * 255).round(),
+    (linearToSrgb(g.clamp(0.0, 1.0)) * 255).round(),
+    (linearToSrgb(b.clamp(0.0, 1.0)) * 255).round(),
+  );
 }
 
 class SongDetailPage extends StatefulWidget {
