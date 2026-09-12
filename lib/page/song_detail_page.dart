@@ -179,6 +179,7 @@ class _BackgroundBlurWidgetState extends State<BackgroundBlurWidget>
         if (!useBlurBackground) {
           // 用户未启用模糊背景时，使用纯色背景
           background = Container(
+            key: const ValueKey('background-off'),
             color: colorScheme.surface,
           );
         } else if (enableDynamicBackground) {
@@ -186,57 +187,66 @@ class _BackgroundBlurWidgetState extends State<BackgroundBlurWidget>
           final List<Color> targetColors = _getMeshTargetColors(colorScheme);
 
           background = Stack(
+            key: const ValueKey('mesh'),
             fit: StackFit.expand,
             children: [
               AnimatedBuilder(
                 animation: _animation,
                 builder: (context, _) {
-                  final List<MeshGradientPoint> animatedPoints = [];
-                  const double amplitude = 0.35;
-                  final double time = _animation.value * 2 * math.pi;
+                  // 取色结果变化时颜色平滑过渡，不再瞬跳
+                  return TweenAnimationBuilder<List<Color>>(
+                    tween: _ColorListTween(end: targetColors),
+                    duration: const Duration(milliseconds: 600),
+                    curve: Curves.easeInOutCubic,
+                    builder: (context, colors, _) {
+                      final List<MeshGradientPoint> animatedPoints = [];
+                      const double amplitude = 0.35;
+                      final double time = _animation.value * 2 * math.pi;
 
-                  for (
-                    int i = 0;
-                    i < math.min(targetColors.length, _gridPositions.length);
-                    i++
-                  ) {
-                    double offsetX = 0.0;
-                    double offsetY = 0.0;
+                      for (
+                        int i = 0;
+                        i < math.min(colors.length, _gridPositions.length);
+                        i++
+                      ) {
+                        double offsetX = 0.0;
+                        double offsetY = 0.0;
 
-                    if (i == 0) {
-                      offsetX = amplitude * math.sin(time);
-                      offsetY = amplitude * math.cos(time * 1.2);
-                    } else if (i == 1) {
-                      offsetX = amplitude * math.cos(time * 0.9);
-                      offsetY = amplitude * math.sin(time * 1.1);
-                    } else if (i == 2) {
-                      offsetX = amplitude * math.sin(time * 1.3);
-                      offsetY = amplitude * math.sin(time * 0.8);
-                    } else {
-                      offsetX = amplitude * math.cos(time * 1.1);
-                      offsetY = amplitude * math.cos(time * 1.4);
-                    }
+                        if (i == 0) {
+                          offsetX = amplitude * math.sin(time);
+                          offsetY = amplitude * math.cos(time * 1.2);
+                        } else if (i == 1) {
+                          offsetX = amplitude * math.cos(time * 0.9);
+                          offsetY = amplitude * math.sin(time * 1.1);
+                        } else if (i == 2) {
+                          offsetX = amplitude * math.sin(time * 1.3);
+                          offsetY = amplitude * math.sin(time * 0.8);
+                        } else {
+                          offsetX = amplitude * math.cos(time * 1.1);
+                          offsetY = amplitude * math.cos(time * 1.4);
+                        }
 
-                    animatedPoints.add(
-                      MeshGradientPoint(
-                        position: Offset(
-                          (_gridPositions[i].dx + offsetX).clamp(0.0, 1.0),
-                          (_gridPositions[i].dy + offsetY).clamp(0.0, 1.0),
+                        animatedPoints.add(
+                          MeshGradientPoint(
+                            position: Offset(
+                              (_gridPositions[i].dx + offsetX).clamp(0.0, 1.0),
+                              (_gridPositions[i].dy + offsetY).clamp(0.0, 1.0),
+                            ),
+                            // 浅色模式下不稀释颜色
+                            color: colors[i].withValues(
+                              alpha: isDarkTheme ? 0.28 : 1.0,
+                            ),
+                          ),
+                        );
+                      }
+
+                      return MeshGradient(
+                        points: animatedPoints,
+                        options: MeshGradientOptions(
+                          blend: 4.0,
+                          noiseIntensity: 0.1,
                         ),
-                        // 浅色模式下不稀释颜色
-                        color: targetColors[i].withValues(
-                          alpha: isDarkTheme ? 0.28 : 1.0,
-                        ),
-                      ),
-                    );
-                  }
-
-                  return MeshGradient(
-                    points: animatedPoints,
-                    options: MeshGradientOptions(
-                      blend: 4.0,
-                      noiseIntensity: 0.1,
-                    ),
+                      );
+                    },
                   );
                 },
               ),
@@ -250,6 +260,7 @@ class _BackgroundBlurWidgetState extends State<BackgroundBlurWidget>
         } else if (currentSong?.albumArt != null) {
           // 静态高斯模糊背景部分
           background = Stack(
+            key: ValueKey('blur-${currentSong!.normalizedPath}'),
             fit: StackFit.expand,
             children: [
               ImageFiltered(
@@ -283,17 +294,39 @@ class _BackgroundBlurWidgetState extends State<BackgroundBlurWidget>
         } else {
           // 模糊背景模式下无封面，使用纯色背景
           background = Container(
+            key: const ValueKey('background-plain'),
             color: colorScheme.surface,
           );
         }
 
         return Stack(
           fit: StackFit.expand,
-          children: [background, if (child != null) child],
+          children: [
+            // 背景层统一通过 AnimatedSwitcher 过渡，切歌/开关背景时不再闪黑
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 500),
+              child: background,
+            ),
+            if (child != null) child,
+          ],
         );
       },
       child: widget.child,
     );
+  }
+}
+
+// 网格背景颜色列表补间，让取色结果变化时颜色平滑过渡而非瞬跳
+class _ColorListTween extends Tween<List<Color>> {
+  _ColorListTween({super.end});
+
+  @override
+  List<Color> lerp(double t) {
+    final beginColors = begin!;
+    final endColors = end!;
+    return List.generate(beginColors.length, (i) {
+      return Color.lerp(beginColors[i], endColors[i], t)!;
+    });
   }
 }
 

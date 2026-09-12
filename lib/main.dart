@@ -440,6 +440,9 @@ class _MyAppState extends State<MyApp> with TrayListener {
           theme: themeProvider.lightThemeData,
           darkTheme: themeProvider.darkThemeData,
           themeMode: themeProvider.themeMode,
+          // 切歌时动态主题色变化较频繁，延长并放缓主题过渡，避免颜色瞬跳
+          themeAnimationDuration: const Duration(milliseconds: 500),
+          themeAnimationCurve: Curves.easeOutCubic,
           builder: (context, materialAppChild) {
             return DragToResizeArea(child: Hotkeys(child: materialAppChild!));
           },
