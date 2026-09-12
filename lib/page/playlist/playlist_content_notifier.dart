@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'lyrics_handler.dart';
 import 'dart:typed_data';
 import 'dart:math';
 import 'dart:async';
@@ -29,6 +28,7 @@ import '../../services/search_service.dart';
 import '../../services/search_index_store.dart';
 import '../../services/notification_service.dart';
 import '../../utils/search_debouncer.dart';
+import '../../lyrics/lyrics_handler.dart';
 
 enum SortCriterion { title, artist, dateModified, file, random, trackNumber }
 
@@ -805,10 +805,23 @@ class PlaylistContentNotifier extends ChangeNotifier {
         }
       }
 
+      final isIgnoredPlaybackError = error is MpvLogError
+          ? (error.prefix == 'ad' ||
+                error.prefix == 'ffmpeg/audio' ||
+                error.prefix.startsWith('ffmpeg/audio') ||
+                error.text.contains('Error decoding audio') ||
+                error.text.contains('decode_frame') ||
+                error.text.contains('invalid frame') ||
+                error.text.contains('invalid sync'))
+          : (errorString.contains('ffmpeg/audio') ||
+                errorString.contains('Error decoding audio') ||
+                errorString.contains('Failed to recognize file format') ||
+                errorString.contains('decode_frame') ||
+                errorString.contains('invalid frame') ||
+                errorString.contains('invalid sync'));
+
       final shouldNotifyUI =
-          !(_settingsProvider.ignorePlaybackErrors &&
-              (errorString.contains('Error decoding audio') ||
-                  errorString.contains('Failed to recognize file format')));
+          !(_settingsProvider.ignorePlaybackErrors && isIgnoredPlaybackError);
 
       if (_currentSong != null) {
         final errorMessage =
@@ -821,7 +834,9 @@ class PlaylistContentNotifier extends ChangeNotifier {
         debugPrint('播放${p.basename(_currentSong!.filePath)}出错: $error');
       } else {
         final errorMessage = '播放出错: $error';
-        _notificationService.error(errorMessage);
+        if (shouldNotifyUI) {
+          _notificationService.error(errorMessage);
+        }
         // 记录详细错误信息到日志文件
         _writeErrorToLog(errorMessage, error);
       }
@@ -1817,7 +1832,10 @@ class PlaylistContentNotifier extends ChangeNotifier {
   }
 
   // 更新播放列表的文件夹路径
-  Future<void> updatePlaylistFolders(int index, List<String> folderPaths) async {
+  Future<void> updatePlaylistFolders(
+    int index,
+    List<String> folderPaths,
+  ) async {
     if (index < 0 || index >= _playlists.length) return;
 
     final playlist = _playlists[index];
@@ -3693,7 +3711,6 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
     notifyListeners();
   }
-
 
   // --- 对选中歌曲的一些操作 ---
 
