@@ -7,7 +7,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:mesh_gradient/mesh_gradient.dart';
-import 'package:colorgram/colorgram.dart';
 
 import '../widgets/lyrics_widget.dart';
 import 'playlist/playlist_content_notifier.dart';
@@ -63,33 +62,37 @@ class _BackgroundBlurWidgetState extends State<BackgroundBlurWidget>
     super.dispose();
   }
 
-  void _checkAndUpdateColors(Song? song, bool isDarkTheme) {
-    if (song == null || song.albumArt == null) {
-      if (_extractedColors != null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) setState(() => _extractedColors = null);
-        });
-      }
-      return;
-    }
+  void _checkAndUpdateColors(
+    Song? song,
+    PlaylistContentNotifier playlistNotifier,
+    bool isDarkTheme,
+  ) {
+    // 无歌曲或无封面时保留上一次取色结果，避免网格背景突变为暗色回退色
+    if (song == null || song.albumArt == null) return;
 
     if (song.filePath == _lastSongFilePath || _isProcessingColor) return;
 
     _lastSongFilePath = song.filePath;
     _isProcessingColor = true;
 
-    _extractColorsAsync(song, isDarkTheme);
+    _extractColorsAsync(song, playlistNotifier, isDarkTheme);
   }
 
-  Future<void> _extractColorsAsync(Song song, bool isDarkTheme) async {
+  Future<void> _extractColorsAsync(
+    Song song,
+    PlaylistContentNotifier playlistNotifier,
+    bool isDarkTheme,
+  ) async {
     try {
-      final ImageProvider imageProvider = MemoryImage(song.albumArt!);
-      final List<CgColor> cgColors = await extractColor(imageProvider, 6);
+      // 调色板在 notifier 中带缓存（与动态主题色共用一次取色），命中时立即可用
+      final List<Color>? rawPalette = await playlistNotifier.getSongPalette(
+        song,
+      );
 
       if (!mounted || song.filePath != _lastSongFilePath) return;
+      if (rawPalette == null || rawPalette.isEmpty) return;
 
-      final List<Color> adjustedColors = cgColors.map((cg) {
-        final rawColor = Color.fromARGB(255, cg.r, cg.g, cg.b);
+      final List<Color> adjustedColors = rawPalette.take(4).map((rawColor) {
         final hsl = HSLColor.fromColor(rawColor);
 
         double newLightness;
@@ -127,30 +130,15 @@ class _BackgroundBlurWidgetState extends State<BackgroundBlurWidget>
     }
   }
 
-  List<MeshGradientPoint> _getMeshPoints(bool isDarkTheme) {
-    final List<Color> baseColors =
-        _extractedColors ??
-        (isDarkTheme
-            ? const [
-                Color(0xFF0B0B0F),
-                Color(0xFF08090D),
-                Color(0xFF0A0B10),
-                Color(0xFF0D0A12),
-              ]
-            : const [
-                Color(0xFFD6D0D2),
-                Color(0xFFD0D5D8),
-                Color(0xFFD5D8DC),
-                Color(0xFFD8D1D6),
-              ]);
-
-    return List.generate(_gridPositions.length, (i) {
-      return MeshGradientPoint(
-        position: _gridPositions[i],
-        // 浅色模式下不稀释颜色
-        color: baseColors[i].withValues(alpha: isDarkTheme ? 0.28 : 1.0),
-      );
-    });
+  List<Color> _getMeshTargetColors(ColorScheme colorScheme) {
+    // 取色未完成或无封面时使用主题容器色作为回退，避免网格背景偏近黑
+    return _extractedColors ??
+        [
+          colorScheme.primaryContainer,
+          colorScheme.secondaryContainer,
+          colorScheme.tertiaryContainer,
+          colorScheme.surfaceContainerHighest,
+        ];
   }
 
   void _manageAnimation(bool shouldAnimate) {
@@ -183,20 +171,21 @@ class _BackgroundBlurWidgetState extends State<BackgroundBlurWidget>
     return Consumer<PlaylistContentNotifier>(
       builder: (context, playlistNotifier, child) {
         final currentSong = playlistNotifier.currentSong;
+        final colorScheme = Theme.of(context).colorScheme;
 
-        _checkAndUpdateColors(currentSong, isDarkTheme);
-        // 当没有封面图或用户未启用模糊背景时，使用纯色背景
-        if (currentSong?.albumArt == null || !useBlurBackground) {
-          return Container(
-            color: Theme.of(context).colorScheme.surface,
-            child: child,
+        _checkAndUpdateColors(currentSong, playlistNotifier, isDarkTheme);
+
+        final Widget background;
+        if (!useBlurBackground) {
+          // 用户未启用模糊背景时，使用纯色背景
+          background = Container(
+            color: colorScheme.surface,
           );
-        }
+        } else if (enableDynamicBackground) {
+          // 动态网格渐变背景：无封面时沿用上次取色或主题容器色，避免整页变黑
+          final List<Color> targetColors = _getMeshTargetColors(colorScheme);
 
-        if (enableDynamicBackground) {
-          final basePoints = _getMeshPoints(isDarkTheme);
-
-          return Stack(
+          background = Stack(
             fit: StackFit.expand,
             children: [
               AnimatedBuilder(
@@ -206,8 +195,11 @@ class _BackgroundBlurWidgetState extends State<BackgroundBlurWidget>
                   const double amplitude = 0.35;
                   final double time = _animation.value * 2 * math.pi;
 
-                  for (int i = 0; i < basePoints.length; i++) {
-                    final point = basePoints[i];
+                  for (
+                    int i = 0;
+                    i < math.min(targetColors.length, _gridPositions.length);
+                    i++
+                  ) {
                     double offsetX = 0.0;
                     double offsetY = 0.0;
 
@@ -228,10 +220,13 @@ class _BackgroundBlurWidgetState extends State<BackgroundBlurWidget>
                     animatedPoints.add(
                       MeshGradientPoint(
                         position: Offset(
-                          (point.position.dx + offsetX).clamp(0.0, 1.0),
-                          (point.position.dy + offsetY).clamp(0.0, 1.0),
+                          (_gridPositions[i].dx + offsetX).clamp(0.0, 1.0),
+                          (_gridPositions[i].dy + offsetY).clamp(0.0, 1.0),
                         ),
-                        color: point.color,
+                        // 浅色模式下不稀释颜色
+                        color: targetColors[i].withValues(
+                          alpha: isDarkTheme ? 0.28 : 1.0,
+                        ),
                       ),
                     );
                   }
@@ -246,51 +241,55 @@ class _BackgroundBlurWidgetState extends State<BackgroundBlurWidget>
                 },
               ),
               Container(
-                color: Theme.of(context).colorScheme.surface.withValues(
+                color: colorScheme.surface.withValues(
                   alpha: isDarkTheme ? 0.4 : 0.6,
                 ),
               ),
-              if (child != null) child,
             ],
           );
-        }
-
-        // 静态高斯模糊背景部分
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            ImageFiltered(
-              imageFilter: ui.ImageFilter.blur(
-                sigmaX: 40,
-                sigmaY: 40,
-                tileMode: TileMode.decal,
+        } else if (currentSong?.albumArt != null) {
+          // 静态高斯模糊背景部分
+          background = Stack(
+            fit: StackFit.expand,
+            children: [
+              ImageFiltered(
+                imageFilter: ui.ImageFilter.blur(
+                  sigmaX: 40,
+                  sigmaY: 40,
+                  tileMode: TileMode.decal,
+                ),
+                child: Image.memory(
+                  currentSong.albumArt!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) =>
+                      Container(color: colorScheme.surface),
+                ),
               ),
-              child: Image.memory(
-                currentSong!.albumArt!,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) =>
-                    Container(color: Theme.of(context).colorScheme.surface),
-              ),
-            ),
-            IgnorePointer(
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      Theme.of(
-                        context,
-                      ).colorScheme.surface.withValues(alpha: 0.8),
-                      Theme.of(
-                        context,
-                      ).colorScheme.surface.withValues(alpha: 0.8),
-                    ],
+              IgnorePointer(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        colorScheme.surface.withValues(alpha: 0.8),
+                        colorScheme.surface.withValues(alpha: 0.8),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            if (child != null) child,
-          ],
+            ],
+          );
+        } else {
+          // 模糊背景模式下无封面，使用纯色背景
+          background = Container(
+            color: colorScheme.surface,
+          );
+        }
+
+        return Stack(
+          fit: StackFit.expand,
+          children: [background, if (child != null) child],
         );
       },
       child: widget.child,
