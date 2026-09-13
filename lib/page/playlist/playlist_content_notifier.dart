@@ -115,6 +115,9 @@ class PlaylistContentNotifier extends ChangeNotifier {
   static const int _maxPaletteCacheSize = 100;
   static const int _paletteSampleWidth = 256; // 取色用降采样宽度
 
+  // --- 下一首预取 ---
+  Timer? _prefetchTimer;
+
   // --- 播放器相关 ---
   final AudioService _audioService = AudioService();
   Player get mediaPlayer => _audioService.player;
@@ -722,6 +725,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
     _metadataCacheSaveTimer?.cancel();
     _equalizerApplyTimer?.cancel();
     _audioControlSaveTimer?.cancel();
+    _prefetchTimer?.cancel(); // 取消下一首预取
     _searchDebouncer.dispose();
     _saveSongMetadataCache();
     _saveAudioControlSettings();
@@ -2697,6 +2701,9 @@ class PlaylistContentNotifier extends ChangeNotifier {
       }
 
       notifyListeners();
+
+      // 预取下一首的封面与调色板
+      _scheduleNextSongPrefetch();
     } catch (e) {
       //
     } finally {
@@ -3231,6 +3238,9 @@ class PlaylistContentNotifier extends ChangeNotifier {
       savePlaybackState();
 
       notifyListeners();
+
+      // 预取下一首的封面与调色板
+      _scheduleNextSongPrefetch();
     } catch (e) {
       // 捕获所有播放相关的异常
       // _notificationService.error('无法播放${p.basename(songFilePath)}，可能文件已经损坏');
@@ -3542,6 +3552,66 @@ class PlaylistContentNotifier extends ChangeNotifier {
       return colors;
     } catch (e) {
       return null;
+    }
+  }
+
+  // 切歌后预取下一首的封面与调色板，让后续切歌全程缓存命中、无主线程开销
+  void _scheduleNextSongPrefetch() {
+    _prefetchTimer?.cancel();
+    // 延迟执行，避开切歌瞬间的重建帧
+    _prefetchTimer = Timer(const Duration(seconds: 3), () {
+      final String? nextPath = _peekNextPath();
+      if (nextPath == null || nextPath.isEmpty) {
+        return;
+      }
+      final String nextKey = _normalizePath(nextPath);
+      if (_currentSong != null && nextKey == _currentSong!.normalizedPath) {
+        return;
+      }
+      unawaited(_prefetchSongAssets(nextPath));
+    });
+  }
+
+  Future<void> _prefetchSongAssets(String filePath) async {
+    final String cacheKey = _normalizePath(filePath);
+    try {
+      Uint8List? cover = _coverCache[cacheKey];
+      if (cover == null) {
+        final normalizedPath = Uri.file(
+          filePath,
+        ).toFilePath(windows: Platform.isWindows);
+        final metadata = await readAudioInfo(
+          path: normalizedPath,
+          options: const AudioInfoOptions(
+            needCover: true,
+            needLyrics: false,
+            needAudioProps: false,
+            needExtraTags: false,
+            needTrackNumber: false,
+          ),
+        );
+        cover = metadata.cover;
+        if (cover != null &&
+            cover.isNotEmpty &&
+            !_coverCache.containsKey(cacheKey)) {
+          _coverCache[cacheKey] = cover;
+          // 标记为可驱逐，显示时由 requestSongCover 重新保护
+          _evictableCoverPaths.add(cacheKey);
+        }
+      }
+
+      if (_paletteCache.containsKey(cacheKey)) {
+        return;
+      }
+      // 动态色与动态背景都关闭时没人消费调色板，跳过取色（封面仍预取）
+      if (cover != null &&
+          cover.isNotEmpty &&
+          (_settingsProvider.useDynamicColor ||
+              _settingsProvider.enableDynamicBackground)) {
+        await _extractAndCachePalette(cacheKey, cover);
+      }
+    } catch (e) {
+      // 预取失败静默忽略，切歌时走正常加载路径
     }
   }
 
