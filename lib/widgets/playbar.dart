@@ -126,6 +126,7 @@ class _PlaybarState extends State<Playbar> {
                                     fit: BoxFit.cover,
                                     width: 50,
                                     height: 50,
+                                    gaplessPlayback: true,
                                     errorBuilder: (context, error, stackTrace) {
                                       return Icon(
                                         Icons.music_note,

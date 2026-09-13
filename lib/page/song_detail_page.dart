@@ -272,6 +272,12 @@ class _BackgroundBlurWidgetState extends State<BackgroundBlurWidget>
                 child: Image.memory(
                   currentSong.albumArt!,
                   fit: BoxFit.cover,
+                  // 无 key：同一首歌内 cacheWidth 随窗口缩放变化时保持旧帧，避免闪黑
+                  gaplessPlayback: true,
+                  cacheWidth:
+                      (MediaQuery.sizeOf(context).width *
+                              MediaQuery.devicePixelRatioOf(context))
+                          .round(),
                   errorBuilder: (context, error, stackTrace) =>
                       Container(color: colorScheme.surface),
                 ),
@@ -792,33 +798,54 @@ class _SongDetailPageState extends State<SongDetailPage> {
                                                                   borderRadius,
                                                               child: AspectRatio(
                                                                 aspectRatio: 1,
-                                                                child:
-                                                                    (currentSong?.albumArt !=
-                                                                            null &&
-                                                                        currentSong!
-                                                                            .albumArt!
-                                                                            .isNotEmpty)
-                                                                    ? Image.memory(
-                                                                        currentSong
-                                                                            .albumArt!,
-                                                                        fit: BoxFit
-                                                                            .cover,
-                                                                        errorBuilder:
-                                                                            (
-                                                                              _,
-                                                                              __,
-                                                                              ___,
-                                                                            ) =>
-                                                                                fallback,
-                                                                      )
-                                                                    : const ColoredBox(
-                                                                        color: Colors
-                                                                            .black12,
-                                                                        child: Center(
-                                                                          child:
-                                                                              fallback,
-                                                                        ),
+                                                                child: AnimatedSwitcher(
+                                                                  duration:
+                                                                      const Duration(
+                                                                        milliseconds:
+                                                                            400,
                                                                       ),
+                                                                  child:
+                                                                      (currentSong?.albumArt !=
+                                                                              null &&
+                                                                          currentSong!
+                                                                              .albumArt!
+                                                                              .isNotEmpty)
+                                                                      ? Image.memory(
+                                                                          currentSong
+                                                                              .albumArt!,
+                                                                          key: ValueKey(
+                                                                            currentSong.normalizedPath,
+                                                                          ),
+                                                                          fit: BoxFit
+                                                                              .cover,
+                                                                          // 同一首歌内 imageSize 随窗口缩放变化时保持旧帧
+                                                                          gaplessPlayback:
+                                                                              true,
+                                                                          cacheWidth:
+                                                                              (imageSize *
+                                                                                      MediaQuery.devicePixelRatioOf(
+                                                                                        context,
+                                                                                      ))
+                                                                                  .round(),
+                                                                          errorBuilder:
+                                                                              (
+                                                                                _,
+                                                                                __,
+                                                                                ___,
+                                                                              ) => fallback,
+                                                                        )
+                                                                      : const ColoredBox(
+                                                                          key: ValueKey(
+                                                                            'no-cover',
+                                                                          ),
+                                                                          color:
+                                                                              Colors.black12,
+                                                                          child: Center(
+                                                                            child:
+                                                                                fallback,
+                                                                          ),
+                                                                        ),
+                                                                ),
                                                               ),
                                                             ),
                                                           ),
