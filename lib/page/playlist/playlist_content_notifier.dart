@@ -4,6 +4,8 @@ import 'dart:math';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:collection';
+import 'dart:isolate';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -111,6 +113,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
   // --- 封面调色板缓存（原始取色结果，按歌曲路径） ---
   final Map<String, List<Color>> _paletteCache = {};
   static const int _maxPaletteCacheSize = 100;
+  static const int _paletteSampleWidth = 256; // 取色用降采样宽度
 
   // --- 播放器相关 ---
   final AudioService _audioService = AudioService();
@@ -3504,14 +3507,36 @@ class PlaylistContentNotifier extends ChangeNotifier {
       return cached;
     }
 
+    return _extractAndCachePalette(cacheKey, albumArt);
+  }
+
+  // 降采样解码后在独立 isolate 中取色：
+  // 避免 colorgram 全分辨率解码、整图 RGBA 拷贝与逐像素统计阻塞 UI 线程
+  Future<List<Color>?> _extractAndCachePalette(
+    String cacheKey,
+    Uint8List albumArt,
+  ) async {
     try {
-      final cgColors = await extractColor(MemoryImage(albumArt), 6);
-      if (cgColors.isEmpty) {
+      final ui.Codec codec = await ui.instantiateImageCodec(
+        albumArt,
+        targetWidth: _paletteSampleWidth,
+      );
+      final ui.FrameInfo frameInfo = await codec.getNextFrame();
+      final ByteData? byteData = await frameInfo.image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      );
+      frameInfo.image.dispose();
+      codec.dispose();
+      if (byteData == null) {
         return null;
       }
-      final colors = cgColors
-          .map((c) => Color.fromARGB(255, c.r, c.g, c.b))
-          .toList(growable: false);
+
+      final Uint8List rgba = byteData.buffer.asUint8List();
+      final colors = await Isolate.run(() => _extractDominantColors(rgba));
+      if (colors.isEmpty) {
+        return null;
+      }
+
       _paletteCache[cacheKey] = colors;
       _trimPaletteCache();
       return colors;
@@ -4863,4 +4888,16 @@ class PlaylistContentNotifier extends ChangeNotifier {
   void setDisableHotKeys(bool value) {
     _disableHotKeys = value;
   }
+}
+
+// 在独立 isolate 中执行：复刻 colorgram 的取色管线（按出现次数排序取主导色），
+// 只操作原始 RGBA 字节；Color 仅包装一个 int，可被 Isolate.run 直接深拷贝返回
+List<Color> _extractDominantColors(Uint8List rgba) {
+  final List<int> samples = sampleFromList(rgba);
+  final List<List<int>> usedColors = getUsedColors(samples);
+  usedColors.sort((a, b) => b[0].compareTo(a[0]));
+  final List<CgColor> colors = getColors(samples, usedColors, 6);
+  return colors
+      .map((c) => Color.fromARGB(255, c.r, c.g, c.b))
+      .toList(growable: false);
 }
