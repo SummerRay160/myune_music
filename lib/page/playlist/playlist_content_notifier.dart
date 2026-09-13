@@ -108,6 +108,10 @@ class PlaylistContentNotifier extends ChangeNotifier {
   final Set<String> _evictableCoverPaths = {};
   static const int _maxCoverCacheSize = 100;
 
+  // --- 封面调色板缓存（原始取色结果，按歌曲路径） ---
+  final Map<String, List<Color>> _paletteCache = {};
+  static const int _maxPaletteCacheSize = 100;
+
   // --- 播放器相关 ---
   final AudioService _audioService = AudioService();
   Player get mediaPlayer => _audioService.player;
@@ -1030,6 +1034,22 @@ class PlaylistContentNotifier extends ChangeNotifier {
 
     // 只在没有封面的情况下加载元数据
     if (basicSong.albumArt == null) {
+      final cacheKey = _normalizePath(filePath);
+
+      // 优先复用封面缓存，避免每次切歌都从磁盘重复读取内嵌封面；
+      // 复用同一字节实例还能让列表/播放页共享图片解码缓存
+      final Uint8List? cachedCover = _coverCache[cacheKey];
+      if (cachedCover != null) {
+        return Song(
+          title: basicSong.title,
+          artist: basicSong.artist,
+          album: basicSong.album,
+          filePath: filePath,
+          albumArt: cachedCover,
+          duration: basicSong.duration,
+        );
+      }
+
       try {
         final normalizedPath = Uri.file(
           filePath,
@@ -1065,7 +1085,6 @@ class PlaylistContentNotifier extends ChangeNotifier {
         }
 
         // 更新缓存
-        final cacheKey = _normalizePath(filePath);
         if (_songMetadataCache.containsKey(cacheKey)) {
           final cachedEntry = _songMetadataCache[cacheKey]!;
           _songMetadataCache[cacheKey] = SongMetadataCacheEntry(
@@ -1075,6 +1094,15 @@ class PlaylistContentNotifier extends ChangeNotifier {
             durationMs: cachedEntry.durationMs,
             modifiedMs: cachedEntry.modifiedMs,
           );
+        }
+
+        // 封面回填缓存，下次切歌直接复用，无需重复读盘；
+        // 标记为可驱逐，显示时由 requestSongCover 重新保护
+        if (metadata.cover != null &&
+            metadata.cover!.isNotEmpty &&
+            !_coverCache.containsKey(cacheKey)) {
+          _coverCache[cacheKey] = metadata.cover;
+          _evictableCoverPaths.add(cacheKey);
         }
 
         return Song(
@@ -2651,7 +2679,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
         _lyricsHandler.clearLyrics();
         _lyricsHandler.loadLyricsForSong(songFilePath);
 
-        extractAndApplyDynamicColor(songToPlay.albumArt);
+        extractAndApplyDynamicColor(songToPlay);
 
         PlaybackTracker().startTracking(songToPlay);
 
@@ -3191,7 +3219,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
       _lyricsHandler.loadLyricsForSong(songFilePath);
 
       // 提取并应用动态主题色
-      extractAndApplyDynamicColor(songToPlay.albumArt);
+      extractAndApplyDynamicColor(songToPlay);
 
       // 开始跟踪播放
       PlaybackTracker().startTracking(songToPlay);
@@ -3406,7 +3434,7 @@ class PlaylistContentNotifier extends ChangeNotifier {
         await _audioService.player.setMediaSession(session);
 
         // 提取并应用动态主题色
-        extractAndApplyDynamicColor(_currentSong!.albumArt);
+        extractAndApplyDynamicColor(_currentSong);
 
         // 将歌曲加载到播放器中，但不自动播放
         try {
@@ -3462,29 +3490,54 @@ class PlaylistContentNotifier extends ChangeNotifier {
   }
 
   // -- 主题管理 --
+  // 获取歌曲封面的调色板（原始取色结果，未按主题调整），带缓存：
+  // 一次取色同时服务动态主题色与播放页网格背景，切歌时命中缓存可立即返回
+  Future<List<Color>?> getSongPalette(Song song) async {
+    final Uint8List? albumArt = song.albumArt;
+    if (albumArt == null || albumArt.isEmpty) {
+      return null;
+    }
+
+    final String cacheKey = song.normalizedPath;
+    final List<Color>? cached = _paletteCache[cacheKey];
+    if (cached != null) {
+      return cached;
+    }
+
+    try {
+      final cgColors = await extractColor(MemoryImage(albumArt), 6);
+      if (cgColors.isEmpty) {
+        return null;
+      }
+      final colors = cgColors
+          .map((c) => Color.fromARGB(255, c.r, c.g, c.b))
+          .toList(growable: false);
+      _paletteCache[cacheKey] = colors;
+      _trimPaletteCache();
+      return colors;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  void _trimPaletteCache() {
+    while (_paletteCache.length > _maxPaletteCacheSize) {
+      _paletteCache.remove(_paletteCache.keys.first);
+    }
+  }
+
   // 提取并应用动态主题色
-  Future<void> extractAndApplyDynamicColor(Uint8List? albumArt) async {
+  Future<void> extractAndApplyDynamicColor(Song? song) async {
     // 检查设置是否启用了动态颜色
-    if (!_settingsProvider.useDynamicColor || albumArt == null) {
+    if (!_settingsProvider.useDynamicColor || song == null) {
       return;
     }
 
     try {
-      final colors = await extractColor(
-        MemoryImage(albumArt),
-        1, // 提取一种主色调
-      );
-      if (colors.isNotEmpty) {
-        final dominantColor = colors[0];
-        final color = Color.fromRGBO(
-          dominantColor.r,
-          dominantColor.g,
-          dominantColor.b,
-          1.0,
-        );
-
-        // 设置主题色
-        _themeProvider.setSeedColor(color);
+      final colors = await getSongPalette(song);
+      if (colors != null && colors.isNotEmpty) {
+        // 设置主题色（取色结果第一个即主色调）
+        _themeProvider.setSeedColor(colors[0]);
       }
     } catch (e) {
       // print('提取颜色失败 $e');

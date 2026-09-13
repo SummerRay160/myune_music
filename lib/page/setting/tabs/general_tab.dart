@@ -221,9 +221,7 @@ class _GeneralTabState extends State<GeneralTab> {
               final playlistNotifier = context.read<PlaylistContentNotifier>();
               final currentSong = playlistNotifier.currentSong;
               if (currentSong != null) {
-                playlistNotifier.extractAndApplyDynamicColor(
-                  currentSong.albumArt,
-                );
+                playlistNotifier.extractAndApplyDynamicColor(currentSong);
               }
             }
             // 当关闭动态颜色时，恢复用户手动选择的种子色
