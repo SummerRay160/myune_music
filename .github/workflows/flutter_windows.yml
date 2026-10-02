@@ -9,20 +9,17 @@ jobs:
 
     steps:
       # 拉取代码
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       # 安装 Flutter
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.2'
+          flutter-version: '3.44.8'
+          channel: stable
 
       # 安装 Rust
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
       # 拉依赖
       - name: Install dependencies
