@@ -1,8 +1,13 @@
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hotkey_manager/hotkey_manager.dart';
+
+// 自定义背景遮罩样式
+enum BackgroundMaskStyle { none, solid, glass }
 
 class SettingsProvider with ChangeNotifier {
   static const _enableGlobalHotkeysKey = 'enableGlobalHotkeys';
@@ -45,12 +50,22 @@ class SettingsProvider with ChangeNotifier {
   static const _preferExternalLyricsKey = 'preferExternalLyrics';
   static const _autoAdjustLyricLayoutKey =
       'autoAdjustLyricLayout'; // 自动调节歌词字体与间距设置的 key
+  static const _lyricFontWeightKey = 'lyricFontWeight'; // 歌词字重设置的 key
 
   static const _enableLyricElasticScrollKey = 'enableLyricElasticScroll';
   static const _enableLoudnessKey = 'enableLoudness';
   static const _enableReplayGainKey = 'enableReplayGain';
   static const _enableGaplessPlaybackKey = 'enableGaplessPlayback';
   static const _autoHidePlayPageComponentsKey = 'autoHidePlayPageComponents';
+
+  static const _enableCustomBackgroundKey =
+      'enableCustomBackground'; // 自定义背景图开关
+  static const _customBackgroundPathKey = 'customBackgroundPath'; // 自定义背景图路径
+  static const _backgroundMaskStyleKey = 'backgroundMaskStyle'; // 背景遮罩样式
+  static const _backgroundMaskOpacityKey = 'backgroundMaskOpacity'; // 背景遮罩不透明度
+  static const _backgroundImageBlurKey = 'backgroundImageBlur'; // 背景图模糊强度
+  static const _railSurfaceOpacityKey = 'railSurfaceOpacity'; // 侧边导航栏不透明度
+  static const _panelSurfaceOpacityKey = 'panelSurfaceOpacity'; // 卡片/面板不透明度
 
   int _maxLinesPerLyric = 2;
   double _fontSize = 22.0; // 默认字体大小
@@ -60,6 +75,7 @@ class SettingsProvider with ChangeNotifier {
   bool _allowAnyFormat = false; // 默认不允许任何格式
   bool _forceSingleLineLyric = false; // 默认不强制单行显示歌词
   double _lyricVerticalSpacing = 6.0; // 默认歌词垂直间距为6.0
+  int _lyricFontWeight = 500; // 默认歌词字重（100~900），高亮行与非高亮行统一使用
   bool _addLyricPadding = true; // 默认启用歌词上下补位
   bool _minimizeToTray = false; // 默认不启用最小化到托盘
   bool _enableLyricBlur = true; // 默认启用歌词模糊效果
@@ -77,6 +93,15 @@ class SettingsProvider with ChangeNotifier {
   bool _enableReplayGain = false;
   bool _enableGaplessPlayback = false; // 默认不启用无缝播放
   bool _autoHidePlayPageComponents = false; // 默认不自动隐藏部分组件
+
+  bool _enableCustomBackground = false; // 默认不启用自定义背景图
+  String? _customBackgroundPath; // 自定义背景图文件路径
+  BackgroundMaskStyle _backgroundMaskStyle =
+      BackgroundMaskStyle.solid; // 默认使用普通遮罩
+  double _backgroundMaskOpacity = 0.7; // 默认遮罩不透明度
+  double _backgroundImageBlur = 20.0; // 毛玻璃模式下的背景模糊强度
+  double _railSurfaceOpacity = 0.65; // 侧边导航栏背景不透明度
+  double _panelSurfaceOpacity = 0.6; // 卡片/面板背景不透明度
 
   bool _enableGlobalHotkeys = true;
   HotKey? _playPauseHotKey;
@@ -104,6 +129,7 @@ class SettingsProvider with ChangeNotifier {
   bool get allowAnyFormat => _allowAnyFormat; // 获取允许任何格式设置
   bool get forceSingleLineLyric => _forceSingleLineLyric; // 获取强制单行歌词设置
   double get lyricVerticalSpacing => _lyricVerticalSpacing; // 获取歌词垂直间距
+  int get lyricFontWeight => _lyricFontWeight; // 获取歌词字重（100~900）
   bool get addLyricPadding => _addLyricPadding; // 获取歌词上下补位设置
   bool get minimizeToTray => _minimizeToTray; // 获取最小化到托盘设置
   bool get enableLyricBlur => _enableLyricBlur; // 获取歌词模糊效果设置
@@ -133,6 +159,37 @@ class SettingsProvider with ChangeNotifier {
   bool get enableGaplessPlayback => _enableGaplessPlayback;
   bool get autoHidePlayPageComponents => _autoHidePlayPageComponents;
 
+  bool get enableCustomBackground => _enableCustomBackground; // 获取自定义背景图开关
+  String? get customBackgroundPath => _customBackgroundPath; // 获取自定义背景图路径
+  BackgroundMaskStyle get backgroundMaskStyle =>
+      _backgroundMaskStyle; // 获取背景遮罩样式
+  double get backgroundMaskOpacity => _backgroundMaskOpacity; // 获取背景遮罩不透明度
+  double get backgroundImageBlur => _backgroundImageBlur; // 获取背景图模糊强度
+
+  // 侧边导航栏背景不透明度
+  double get railSurfaceOpacity => _railSurfaceOpacity;
+
+  // 卡片/面板背景不透明度
+  double get panelSurfaceOpacity => _panelSurfaceOpacity;
+
+  // 是否真正可以显示自定义背景图：已启用、已选择路径且文件仍然存在
+  bool get hasCustomBackgroundImage {
+    if (!_enableCustomBackground) return false;
+    final path = _customBackgroundPath;
+    if (path == null || path.isEmpty) return false;
+    return File(path).existsSync();
+  }
+
+  // 当前可用的背景图路径，不可用时为 null
+  String? get existingBackgroundPath {
+    if (!hasCustomBackgroundImage) return null;
+    return _customBackgroundPath;
+  }
+
+  // 遮罩是否使用毛玻璃效果
+  bool get isGlassBackgroundMask =>
+      _backgroundMaskStyle == BackgroundMaskStyle.glass;
+
   bool get enableGlobalHotkeys => _enableGlobalHotkeys;
   HotKey? get playPauseHotKey => _playPauseHotKey;
   HotKey? get nextTrackHotKey => _nextTrackHotKey;
@@ -159,6 +216,10 @@ class SettingsProvider with ChangeNotifier {
     _enableOnlineLyrics = prefs.getBool(_enableOnlineLyricsKey) ?? false;
     _lyricVerticalSpacing =
         prefs.getDouble(_lyricVerticalSpacingKey) ?? 6.0; // 加载歌词垂直间距设置
+    _lyricFontWeight = (prefs.getInt(_lyricFontWeightKey) ?? 500).clamp(
+      100,
+      900,
+    ); // 加载歌词字重设置
     _addLyricPadding = prefs.getBool(_addLyricPaddingKey) ?? true; // 加载歌词上下补位设置
     _minimizeToTray = prefs.getBool(_minimizeToTrayKey) ?? false; // 加载最小化到托盘设置
     _enableLyricBlur = prefs.getBool(_enableLyricBlurKey) ?? true; // 加载歌词模糊效果设置
@@ -184,7 +245,20 @@ class SettingsProvider with ChangeNotifier {
     _enableLoudness = prefs.getBool(_enableLoudnessKey) ?? false;
     _enableReplayGain = prefs.getBool(_enableReplayGainKey) ?? false;
     _enableGaplessPlayback = prefs.getBool(_enableGaplessPlaybackKey) ?? false;
-    _autoHidePlayPageComponents = prefs.getBool(_autoHidePlayPageComponentsKey) ?? false;
+    _autoHidePlayPageComponents =
+        prefs.getBool(_autoHidePlayPageComponentsKey) ?? false;
+
+    // 加载自定义背景图设置
+    _enableCustomBackground =
+        prefs.getBool(_enableCustomBackgroundKey) ?? false;
+    _customBackgroundPath = prefs.getString(_customBackgroundPathKey);
+    _backgroundMaskStyle = _backgroundMaskStyleFromString(
+      prefs.getString(_backgroundMaskStyleKey),
+    );
+    _backgroundMaskOpacity = prefs.getDouble(_backgroundMaskOpacityKey) ?? 0.7;
+    _backgroundImageBlur = prefs.getDouble(_backgroundImageBlurKey) ?? 20.0;
+    _railSurfaceOpacity = prefs.getDouble(_railSurfaceOpacityKey) ?? 0.65;
+    _panelSurfaceOpacity = prefs.getDouble(_panelSurfaceOpacityKey) ?? 0.6;
     if (_enableLoudness && _enableReplayGain) {
       _enableReplayGain = false;
       await prefs.setBool(_enableReplayGainKey, false);
@@ -284,6 +358,15 @@ class SettingsProvider with ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_lyricVerticalSpacingKey, value);
+  }
+
+  void setLyricFontWeight(int value) async {
+    final clamped = value.clamp(100, 900);
+    if (_lyricFontWeight == clamped) return;
+    _lyricFontWeight = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_lyricFontWeightKey, clamped);
   }
 
   void setPrimaryLyricSource(String value) async {
@@ -474,6 +557,89 @@ class SettingsProvider with ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_enableGaplessPlaybackKey, value);
+  }
+
+  void setEnableCustomBackground(bool value) async {
+    if (_enableCustomBackground == value) return;
+    _enableCustomBackground = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_enableCustomBackgroundKey, value);
+  }
+
+  void setCustomBackgroundPath(String? path) async {
+    _customBackgroundPath = (path == null || path.isEmpty) ? null : path;
+    // 选择了新的背景图后自动启用，避免用户以为设置没生效
+    if (_customBackgroundPath != null) {
+      _enableCustomBackground = true;
+    }
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    if (_customBackgroundPath == null) {
+      await prefs.remove(_customBackgroundPathKey);
+    } else {
+      await prefs.setString(_customBackgroundPathKey, _customBackgroundPath!);
+    }
+    await prefs.setBool(_enableCustomBackgroundKey, _enableCustomBackground);
+  }
+
+  void setBackgroundMaskStyle(BackgroundMaskStyle style) async {
+    if (_backgroundMaskStyle == style) return;
+    _backgroundMaskStyle = style;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_backgroundMaskStyleKey, style.name);
+  }
+
+  // 保证一点文字可读性
+  static const double minBackgroundMaskOpacity = 0.2;
+
+  void setBackgroundMaskOpacity(double value) async {
+    final clamped = value.clamp(minBackgroundMaskOpacity, 1.0);
+    if (_backgroundMaskOpacity == clamped) return;
+    _backgroundMaskOpacity = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_backgroundMaskOpacityKey, clamped);
+  }
+
+  void setBackgroundImageBlur(double value) async {
+    final clamped = value.clamp(0.0, 60.0);
+    if (_backgroundImageBlur == clamped) return;
+    _backgroundImageBlur = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_backgroundImageBlurKey, clamped);
+  }
+
+  void setRailSurfaceOpacity(double value) async {
+    final clamped = value.clamp(0.0, 1.0);
+    if (_railSurfaceOpacity == clamped) return;
+    _railSurfaceOpacity = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_railSurfaceOpacityKey, clamped);
+  }
+
+  void setPanelSurfaceOpacity(double value) async {
+    final clamped = value.clamp(0.0, 1.0);
+    if (_panelSurfaceOpacity == clamped) return;
+    _panelSurfaceOpacity = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_panelSurfaceOpacityKey, clamped);
+  }
+
+  static BackgroundMaskStyle _backgroundMaskStyleFromString(String? value) {
+    switch (value) {
+      case 'none':
+        return BackgroundMaskStyle.none;
+      case 'glass':
+        return BackgroundMaskStyle.glass;
+      case 'solid':
+      default:
+        return BackgroundMaskStyle.solid;
+    }
   }
 
   HotKey? _parseHotKey(String? jsonStr, String type) {
